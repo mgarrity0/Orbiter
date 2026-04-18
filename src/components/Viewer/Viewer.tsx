@@ -6,6 +6,8 @@ import { EffectComposer, Bloom, ToneMapping } from '@react-three/postprocessing'
 import { ToneMappingMode } from 'postprocessing';
 import { useAppStore, CameraPreset } from '../../state/store';
 import { Dome } from '../Dome';
+import { InspectorHUD } from './InspectorHUD';
+import { WebcamOverlay } from './WebcamOverlay';
 import { motionController } from '../../core/motion';
 
 // Positions chosen so the dome (radius ~2.44m, hanging below origin with open
@@ -239,6 +241,8 @@ export function Viewer() {
     <div className="viewer">
       <Toolbar />
       <div className="viewer-hint">Shift+drag to tilt the dome</div>
+      <InspectorHUD />
+      <WebcamOverlay />
       <div className="viewer-canvas-wrap" ref={wrapRef}>
         <Canvas
           camera={{ position: [4.5, 0.5, 6.5], fov: 50, near: 0.05, far: 200 }}

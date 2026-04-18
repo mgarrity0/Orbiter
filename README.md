@@ -1,5 +1,11 @@
 # Orbiter
 
+[![CI](https://github.com/mgarrity0/Orbiter/actions/workflows/ci.yml/badge.svg)](https://github.com/mgarrity0/Orbiter/actions/workflows/ci.yml)
+![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![Three.js](https://img.shields.io/badge/Three.js-0.169-000000?logo=three.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)
+
 Orbiter is a desktop app for designing, simulating, and deploying LED patterns for a
 16-foot half-dome WS2815 LED installation. It combines a real-time 3D simulator with
 a hot-reloading JavaScript pattern runtime, motion + audio inputs, an on-device
@@ -7,6 +13,19 @@ controller topology editor, and exporters for WLED and FastLED hardware.
 
 It runs as a Tauri 2 desktop app (Rust shell + webview frontend) so the same
 codebase targets Windows, macOS, and Linux.
+
+## Screenshots
+
+> Drop screenshots / capture GIFs into `docs/screenshots/` with the filenames
+> referenced below. See [docs/screenshots/README.md](docs/screenshots/README.md)
+> for what to capture at what aspect ratio.
+
+| | |
+|---|---|
+| ![Main viewer](docs/screenshots/01-viewer.png) | ![Pattern authoring](docs/screenshots/02-pattern.png) |
+| *Main view — dome with `plasma` running and bloom enabled* | *Hot-reloading a pattern from `patterns/`* |
+| ![Controllers panel](docs/screenshots/03-controllers.png) | ![Export panel](docs/screenshots/04-export.png) |
+| *Topology editor with coverage warnings* | *Exporting WLED presets, baked frames, and FastLED sketches* |
 
 ---
 
@@ -337,10 +356,33 @@ npm run tauri build
 | 3 | Motion (drag/rocking/playback) + audio (mic/FFT) | ✅ |
 | 4 | Controller topology editor + three exporters | ✅ |
 | 5 | Diffusion halos, project save/load, bloom/HDR | ✅ |
+| 6 | Calibration, in-app Monaco editor, pixel inspector HUD, webcam overlay, 5 new seed patterns, CI | ✅ |
 
-Open directions post-phase-5: BOM / wiring-diagram generator, on-device frame
-streamer for baked output, more seed patterns, calibration helpers (per-LED
-position capture from photos), deploy-and-flash tooling from the Export panel.
+**Calibration** — import/export a JSON file of captured LED positions
+(format v1: `{ formatVersion, ledCount, units: "meters", positions: [x,y,z,…] }`)
+from the Calibration panel. Toggle between synthetic and captured modes
+to compare; Export Current seeds a file you can refine externally.
+
+**Pattern inspector** — hover any LED in the viewer to see its ring,
+per-ring index, dome-local coordinates, and the pattern's current RGB
+output (pre-gamma). A floating HUD tracks the cursor.
+
+**In-app pattern editor** — click "Edit patterns" in the header to open a
+Monaco-powered editor over the viewer. Save with Ctrl/Cmd+S; the notify
+watcher picks up the write and hot-reloads the active pattern. The
+"New…" button scaffolds a fresh pattern file from a template.
+
+**Webcam overlay** — toggle a live camera feed over the 3D canvas with
+tunable opacity and an optional mirror. Point a camera at the real dome
+for side-by-side alignment + color-temperature comparison.
+
+**New seed patterns:** `starfield`, `lightning`, `beat-pulse` (kick-reactive
+radial ripples), `audio-gradient` (latitude gradient steered by
+low/mid/high bands), `rainstorm`.
+
+Open directions post-phase-6: BOM / wiring-diagram generator, on-device
+frame streamer for baked output, deploy-and-flash tooling from the
+Export panel.
 
 ---
 

@@ -71,6 +71,26 @@ fn read_pattern(name: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+// Save a pattern file. Used by the in-app editor. `name` must end in .js
+// or .mjs and must not contain path separators. The notify watcher on
+// patterns/ will fire immediately after this write, so the frontend gets
+// its normal hot-reload path "for free" — no separate reload emit here.
+#[tauri::command]
+fn write_pattern(name: String, content: String) -> Result<String, String> {
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("invalid pattern name".into());
+    }
+    if !(name.ends_with(".js") || name.ends_with(".mjs")) {
+        return Err("pattern filename must end in .js or .mjs".into());
+    }
+    let root = project_root()?;
+    let dir = PathBuf::from(&root).join("patterns");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(&name);
+    std::fs::write(&path, content.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 #[derive(Deserialize)]
 struct ExportFile {
     filename: String,
@@ -171,6 +191,7 @@ pub fn run() {
             project_root,
             list_patterns,
             read_pattern,
+            write_pattern,
             write_export_files,
             list_projects,
             read_project,

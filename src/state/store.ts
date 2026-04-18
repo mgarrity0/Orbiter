@@ -11,6 +11,11 @@ import type { PatternModule } from '../core/patternApi';
 import { defaultMotionConfig, MotionConfig } from '../core/motion';
 import { defaultTopology, Topology } from '../core/topology';
 import type { ProjectFile } from '../core/project';
+import {
+  applyCalibration,
+  CalibrationState,
+  defaultCalibration,
+} from '../core/calibration';
 
 export type CameraPreset = 'orbit' | 'front' | 'side' | 'top';
 
@@ -72,9 +77,29 @@ export type AppState = {
   projectName: string;
   setProjectName: (name: string) => void;
   applyProjectFile: (p: ProjectFile) => void;
+
+  calibration: CalibrationState;
+  setCalibration: (positions: Float32Array, sourceName: string) => void;
+  clearCalibration: () => void;
+  setCalibrationEnabled: (enabled: boolean) => void;
+  setCalibrationError: (err: string | null) => void;
+
+  // Pattern inspector — LED index under the cursor, or null when not
+  // hovering any LED. Set by the Dome's raycast; read by the HUD overlay.
+  hoveredLedIndex: number | null;
+  setHoveredLed: (i: number | null) => void;
 };
 
 const initialStructure = defaultStructure();
+
+// Rebuild the LED list from a structure and optionally overlay captured
+// positions. The overlay is a no-op when calibration is disabled or the
+// position buffer doesn't match the structure's total LED count.
+function ledsFor(structure: Structure, cal: CalibrationState): Led[] {
+  const base = buildLeds(structure);
+  if (!cal.enabled || !cal.positions) return base;
+  return applyCalibration(base, cal.positions);
+}
 
 export const useAppStore = create<AppState>((set) => ({
   structure: initialStructure,
@@ -93,12 +118,14 @@ export const useAppStore = create<AppState>((set) => ({
   audio: { requested: false, error: null },
   topology: defaultTopology(initialStructure),
   projectName: 'untitled',
+  calibration: defaultCalibration,
 
-  setStructure: (s) => set({ structure: s, leds: buildLeds(s) }),
+  setStructure: (s) =>
+    set((state) => ({ structure: s, leds: ledsFor(s, state.calibration) })),
   patchStructure: (patch) =>
     set((state) => {
       const next = { ...state.structure, ...patch } as Structure;
-      return { structure: next, leds: buildLeds(next) };
+      return { structure: next, leds: ledsFor(next, state.calibration) };
     }),
   setColorConfig: (c) => set({ colorConfig: c }),
   patchColorConfig: (patch) =>
@@ -143,7 +170,7 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({
       projectName: p.name,
       structure: p.structure,
-      leds: buildLeds(p.structure),
+      leds: ledsFor(p.structure, state.calibration),
       colorConfig: p.colorConfig,
       topology: p.topology,
       motionConfig: p.motionConfig,
@@ -156,6 +183,33 @@ export const useAppStore = create<AppState>((set) => ({
         activeName: p.activePatternName,
       },
     })),
+
+  setCalibration: (positions, sourceName) =>
+    set((state) => {
+      const cal: CalibrationState = {
+        enabled: true,
+        positions,
+        sourceName,
+        error: null,
+      };
+      return { calibration: cal, leds: ledsFor(state.structure, cal) };
+    }),
+  clearCalibration: () =>
+    set((state) => ({
+      calibration: defaultCalibration,
+      leds: ledsFor(state.structure, defaultCalibration),
+    })),
+  setCalibrationEnabled: (enabled) =>
+    set((state) => {
+      const cal = { ...state.calibration, enabled };
+      return { calibration: cal, leds: ledsFor(state.structure, cal) };
+    }),
+  setCalibrationError: (err) =>
+    set((state) => ({ calibration: { ...state.calibration, error: err } })),
+
+  hoveredLedIndex: null,
+  setHoveredLed: (i) =>
+    set((state) => (state.hoveredLedIndex === i ? state : { hoveredLedIndex: i })),
 }));
 
 // Non-reactive selector helpers -- for hot paths that shouldn't trigger

@@ -34,6 +34,10 @@ export async function readPatternSource(name: string): Promise<string> {
   return await invoke<string>('read_pattern', { name });
 }
 
+export async function writePatternSource(name: string, content: string): Promise<string> {
+  return await invoke<string>('write_pattern', { name, content });
+}
+
 export async function loadPattern(name: string): Promise<LoadResult> {
   let source: string;
   try {

@@ -81,6 +81,12 @@ input[type="number"]:focus, select:focus {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.app-editor-btn {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 3px 10px;
+}
+
 .app-body {
   flex: 1;
   display: flex;
@@ -494,3 +500,175 @@ input[type="number"]:focus, select:focus {
   margin-top: 4px;
 }
 .project-actions button { flex: 1; }
+
+/* Webcam overlay */
+.webcam-video {
+  position: absolute;
+  inset: 44px 0 0 0; /* leave room for the top toolbar */
+  width: 100%;
+  height: calc(100% - 44px);
+  object-fit: cover;
+  pointer-events: none;
+  z-index: 2;
+  background: transparent;
+}
+.webcam-controls {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(10, 10, 10, 0.75);
+  backdrop-filter: blur(6px);
+  border: 1px solid #222;
+  border-radius: 6px;
+}
+.webcam-slider { display: flex; align-items: center; }
+.webcam-slider input[type="range"] {
+  width: 120px;
+  accent-color: #4a6cff;
+}
+.webcam-error {
+  font-size: 11px;
+  color: #ffb4b4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* In-app pattern editor (Monaco overlay) */
+.editor-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 50;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 40px;
+}
+.editor-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #0d0d0d;
+  border: 1px solid #222;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+.editor-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1a1a1a;
+  background: #111;
+  flex-shrink: 0;
+}
+.editor-title {
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #d0d0d0;
+}
+.editor-file-select {
+  background: #0a0a0a;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  padding: 3px 6px;
+  color: inherit;
+  min-width: 180px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.editor-status {
+  margin-left: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #777;
+}
+.editor-status.is-ok { color: #9fe8a9; }
+.editor-status.is-error { color: #ffb4b4; }
+.editor-close {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+.editor-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Inspector HUD (pixel hover readout) */
+.inspector-hud {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  z-index: 3;
+  min-width: 210px;
+  padding: 10px 12px;
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(6px);
+  border: 1px solid #222;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #d0d0d0;
+  pointer-events: none;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+}
+.inspector-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.inspector-row:last-child { margin-bottom: 0; }
+.inspector-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  border: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+.inspector-hex {
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: #f0f0f0;
+}
+.inspector-rgb { color: #888; }
+.inspector-meta { color: #888; justify-content: space-between; }
+.inspector-meta strong { color: #e6e6e6; }
+
+/* Calibration panel */
+.calibration-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.calibration-actions button { flex: 1; }
+.calibration-panel .field {
+  grid-template-columns: 120px auto;
+  justify-content: start;
+}
+.calibration-panel .field input[type="checkbox"] {
+  justify-self: start;
+  width: 16px;
+  height: 16px;
+  accent-color: #4a6cff;
+  cursor: pointer;
+}
+.calibration-panel .field input[type="checkbox"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

@@ -8,6 +8,7 @@ import { bakeFrameToLinearFloats } from '../../core/colorSpace';
 import type { RenderContext, SetupContext } from '../../core/patternApi';
 import { motionController } from '../../core/motion';
 import { audioEngine } from '../../core/audio';
+import { inspector } from '../../core/inspector';
 
 // Sphere geometry for one LED, reused across all instances.
 const LED_RADIUS_METERS = 0.012;
@@ -34,6 +35,7 @@ const IDLE_COLOR = new THREE.Color(0.03, 0.03, 0.03);
 export function Dome() {
   const structure = useAppStore((s) => s.structure);
   const leds = useAppStore((s) => s.leds);
+  const setHoveredLed = useAppStore((s) => s.setHoveredLed);
   const meshRef = useRef<THREE.InstancedMesh>(null!);
   const haloRef = useRef<THREE.InstancedMesh>(null!);
   const groupRef = useRef<THREE.Group>(null!);
@@ -70,11 +72,16 @@ export function Dome() {
   // Buffers for the gamma pipeline. Re-alloc only when the LED count changes.
   const ledCount = leds.length;
   const buffers = useMemo(() => {
-    return {
+    const b = {
       rgbOut: new Uint8ClampedArray(ledCount * 3),
       linearOut: new Float32Array(ledCount * 3),
       haloLinearOut: new Float32Array(ledCount * 3),
     };
+    // Publish the pattern-byte buffer to the inspector so the hover HUD
+    // can show live color values without duplicating the pipeline.
+    inspector.rgbOut = b.rgbOut;
+    inspector.ledCount = ledCount;
+    return b;
   }, [ledCount]);
 
   // Per-LED halo intensity looked up once from the ring's diffusion setting.
@@ -301,6 +308,16 @@ export function Dome() {
           ref={meshRef}
           args={[undefined, undefined, Math.max(1, leds.length)]}
           frustumCulled={false}
+          onPointerMove={(e) => {
+            e.stopPropagation();
+            if (typeof e.instanceId === 'number') {
+              setHoveredLed(e.instanceId);
+            }
+          }}
+          onPointerOut={(e) => {
+            e.stopPropagation();
+            setHoveredLed(null);
+          }}
         >
           <sphereGeometry args={[LED_RADIUS_METERS, 8, 6]} />
           <meshBasicMaterial toneMapped={false} />
