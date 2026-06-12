@@ -99,7 +99,28 @@ export function StructurePanel() {
               ),
             })
           }
-          title="How far toward the apex the structural plywood ribs extend. Frame geometry — independent of the LED layout."
+          title="How far toward the bottom apex the structural plywood ribs extend. Frame geometry — independent of the LED layout."
+        />
+      </label>
+      <label className="field">
+        <span>Frame top lat°</span>
+        <input
+          type="number"
+          step="0.5"
+          min="-89"
+          max="89"
+          value={structure.frameTopLatitudeDeg}
+          onChange={(e) =>
+            patchStructure({
+              frameTopLatitudeDeg: clampFloat(
+                e.target.value,
+                -89,
+                89,
+                structure.frameTopLatitudeDeg,
+              ),
+            })
+          }
+          title="How far the drawn ribs climb. 0 stops at the equator; negative rises above it toward the top pole, closing the orb like the physical build."
         />
       </label>
       <label className="field">
@@ -136,14 +157,15 @@ export function StructurePanel() {
                     <input
                       type="number"
                       step="0.5"
-                      min="0"
+                      min="-89"
                       max="89"
                       value={ring.latitudeDeg}
                       onChange={(e) =>
                         updateRing(i, {
-                          latitudeDeg: clampFloat(e.target.value, 0, 89, ring.latitudeDeg),
+                          latitudeDeg: clampFloat(e.target.value, -89, 89, ring.latitudeDeg),
                         })
                       }
+                      title="Negative latitudes sit above the equator, toward the top pole."
                     />
                   </td>
                   <td>
@@ -239,6 +261,27 @@ export function StructurePanel() {
             </select>
           </label>
           <label className="field">
+            <span>Top lat°</span>
+            <input
+              type="number"
+              step="0.5"
+              min="-89"
+              max="88"
+              value={structure.rib.topLatitudeDeg}
+              onChange={(e) =>
+                updateRib({
+                  topLatitudeDeg: clampFloat(
+                    e.target.value,
+                    -89,
+                    structure.rib.apexLatitudeDeg - 1,
+                    structure.rib.topLatitudeDeg,
+                  ),
+                })
+              }
+              title="Where the strip starts. 0 = the equator; negative climbs above it toward the top pole, like the build's channels running up and over."
+            />
+          </label>
+          <label className="field">
             <span>Apex lat°</span>
             <input
               type="number"
@@ -248,10 +291,15 @@ export function StructurePanel() {
               value={structure.rib.apexLatitudeDeg}
               onChange={(e) =>
                 updateRib({
-                  apexLatitudeDeg: clampFloat(e.target.value, 1, 89, structure.rib.apexLatitudeDeg),
+                  apexLatitudeDeg: clampFloat(
+                    e.target.value,
+                    structure.rib.topLatitudeDeg + 1,
+                    89,
+                    structure.rib.apexLatitudeDeg,
+                  ),
                 })
               }
-              title="How close to the apex the rib strip terminates (degrees of latitude)."
+              title="How close to the bottom apex the rib strip terminates (degrees of latitude)."
             />
           </label>
           <label className="field">

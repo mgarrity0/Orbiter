@@ -148,6 +148,11 @@ function validateStructure(raw: unknown): void {
     }
     asFiniteNumber(rib, 'ledDensity', 'structure.rib');
     asFiniteNumber(rib, 'apexLatitudeDeg', 'structure.rib');
+    // topLatitudeDeg arrived with the orb-extent feature; older files omit
+    // it (backfilled below).
+    if (rib.topLatitudeDeg !== undefined) {
+      asFiniteNumber(rib, 'topLatitudeDeg', 'structure.rib');
+    }
     asString(rib, 'diffusion', 'structure.rib');
     asEnum(rib, 'chipset', 'structure.rib', CHIPSETS);
 
@@ -170,6 +175,9 @@ function validateStructure(raw: unknown): void {
   }
   if (raw.frameApexLatitudeDeg !== undefined) {
     asFiniteNumber(raw, 'frameApexLatitudeDeg', 'structure');
+  }
+  if (raw.frameTopLatitudeDeg !== undefined) {
+    asFiniteNumber(raw, 'frameTopLatitudeDeg', 'structure');
   }
 }
 
@@ -276,8 +284,13 @@ export function parseProjectFile(raw: unknown): ProjectFile {
   if (rib.holes === undefined) {
     rib.holes = { count: 0, offsetMeters: 0.14, chipset: 'WS2811' };
   }
+  // Strips and frame stopped at the equator before the orb-extent feature.
+  if (rib.topLatitudeDeg === undefined) rib.topLatitudeDeg = 0;
   if (structure.frameApexLatitudeDeg === undefined) {
     structure.frameApexLatitudeDeg = 85;
+  }
+  if (structure.frameTopLatitudeDeg === undefined) {
+    structure.frameTopLatitudeDeg = 0;
   }
   const topology = raw.topology as Record<string, unknown>;
   for (const c of topology.controllers as Array<Record<string, unknown>>) {

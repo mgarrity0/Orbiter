@@ -6,8 +6,11 @@
 //   x =  r * cos(lat) * cos(lon)
 //   y = -r * sin(lat)
 //   z = -r * cos(lat) * sin(lon)
-// where r = diameter/2.  lat = 0 is the equator (widest ring, at the top);
-// lat = π/2 is the (closed) apex at the bottom.
+// where r = diameter/2.  lat = 0 is the equator (the widest ring);
+// lat = π/2 is the (closed) apex at the bottom, and NEGATIVE latitudes
+// rise above the equator toward the top pole at +r — that's how the
+// structure closes into an orb like the physical build, whose ribs
+// converge at the top.
 //
 // Two LED layout modes:
 //   - 'rings': LEDs wrap horizontally around the dome at fixed latitudes.
@@ -47,7 +50,7 @@ export type Ring = {
 // a straight meridian channel.
 export type RibWave = {
   amplitudeMeters: number; // radial swing of the channel (± from centerline)
-  cycles: number;          // full sine periods from rim to strip end
+  cycles: number;          // full sine periods across the strip's length
 };
 
 // Drilled holes alongside the channel, one point LED each. Holes alternate
@@ -60,11 +63,15 @@ export type RibHoles = {
 };
 
 // Ribs are identical (one CNC template) so they share a single config
-// object rather than a per-rib list. `apexLatitudeDeg` is how close to the
-// apex the channel terminates.
+// object rather than a per-rib list. The strip spans latitudes
+// `topLatitudeDeg` → `apexLatitudeDeg`: the apex end is how close to the
+// bottom apex the channel terminates, and the top end is how far it climbs
+// — 0 stops at the equator, negative values rise above it toward the top
+// pole, closing the orb like the physical build.
 export type RibConfig = {
   ledCount: number;
   ledDensity: LedDensity;
+  topLatitudeDeg: number;
   apexLatitudeDeg: number;
   diffusion: Diffusion;
   chipset: Chipset;
@@ -78,10 +85,13 @@ export type Structure = {
   diameterMeters: number;
   shape: 'open-top-half-dome';
   verticalRibCount: number;
-  // How far toward the apex the structural plywood ribs are drawn. This is
-  // frame geometry, deliberately independent of the LED layout — switching
-  // between ring and rib LED configs doesn't change the physical frame.
+  // Latitude span of the structural plywood ribs as drawn: how far toward
+  // the bottom apex they extend, and how far they climb above the equator
+  // (negative top = toward the top pole, where the build's ribs converge).
+  // This is frame geometry, deliberately independent of the LED layout —
+  // switching between ring and rib LED configs doesn't change the frame.
   frameApexLatitudeDeg: number;
+  frameTopLatitudeDeg: number;
   layout: LedLayout;
   rings: Ring[];
   rib: RibConfig;
@@ -135,12 +145,22 @@ export function suggestedLedCount(
 
 // ---------- rib channel geometry ----------------------------------------
 
-// Radial displacement of the routed channel at parameter t (0 = rim,
-// 1 = channel end at apexLatitudeDeg).
+// Radial displacement of the routed channel at parameter t (0 = top end of
+// the strip, 1 = channel end at apexLatitudeDeg).
 function channelWaveMeters(rib: RibConfig, t: number): number {
   const { amplitudeMeters, cycles } = rib.wave;
   if (amplitudeMeters <= 0 || cycles <= 0) return 0;
   return amplitudeMeters * Math.sin(t * cycles * Math.PI * 2);
+}
+
+// Latitude at parameter t along the strip, guarded so the span stays
+// strictly positive even if a project file claims top >= apex (builders
+// divide by the span; a degenerate config should render squashed, not
+// NaN out).
+function ribLatAt(rib: RibConfig, t: number): number {
+  const apexDeg = rib.apexLatitudeDeg;
+  const topDeg = Math.min(rib.topLatitudeDeg, apexDeg - 1);
+  return (topDeg + t * (apexDeg - topDeg)) * DEG;
 }
 
 function spherePoint(
@@ -153,9 +173,10 @@ function spherePoint(
   return [rr * cosLon, -radiusMeters * Math.sin(lat), -rr * sinLon];
 }
 
-// Point on a rib's routed channel at parameter t in [0,1]. The wave
-// displaces the point radially, which keeps it in the rib's meridian plane
-// (on the board face) — the squiggle you see on the physical ribs.
+// Point on a rib's routed channel at parameter t in [0,1] (t=0 at the
+// strip's top end, t=1 at the apex end). The wave displaces the point
+// radially, which keeps it in the rib's meridian plane (on the board
+// face) — the squiggle you see on the physical ribs.
 export function ribChannelPoint(
   diameterMeters: number,
   rib: RibConfig,
@@ -164,7 +185,7 @@ export function ribChannelPoint(
   t: number,
 ): [number, number, number] {
   const lon = (ribIndex / ribCount) * Math.PI * 2;
-  const lat = t * rib.apexLatitudeDeg * DEG;
+  const lat = ribLatAt(rib, t);
   const rEff = diameterMeters / 2 + channelWaveMeters(rib, t);
   return spherePoint(rEff, lat, Math.cos(lon), Math.sin(lon));
 }
@@ -229,15 +250,19 @@ export function defaultRings(diameterMeters: number, density: LedDensity = 60): 
 
 export function defaultRib(diameterMeters: number, density: LedDensity = 60): RibConfig {
   const rib: RibConfig = {
-    ledCount: 1, // placeholder — replaced below once the wave is known
+    ledCount: 1, // placeholder — replaced below once the span/wave is known
     ledDensity: density,
+    // The strip climbs well above the equator like the build's ribs, which
+    // converge near the top pole.
+    topLatitudeDeg: -65,
     apexLatitudeDeg: 85,
     diffusion: 'bare',
     chipset: 'WS2815',
     // Sized to read clearly at the default 4.88m dome: ±9cm of swing over
-    // 7 periods approximates the build's routed channel.
-    wave: { amplitudeMeters: 0.09, cycles: 7 },
-    holes: { count: 12, offsetMeters: 0.14, chipset: 'WS2811' },
+    // 10 periods approximates the build's routed channel across the longer
+    // top-to-apex span.
+    wave: { amplitudeMeters: 0.09, cycles: 10 },
+    holes: { count: 18, offsetMeters: 0.14, chipset: 'WS2811' },
   };
   rib.ledCount = suggestedRibLedCount(diameterMeters, rib);
   return rib;
@@ -250,6 +275,7 @@ export function defaultStructure(): Structure {
     shape: 'open-top-half-dome',
     verticalRibCount: 16,
     frameApexLatitudeDeg: 85,
+    frameTopLatitudeDeg: -65,
     // Rib layout is the default — it's what the physical build is.
     layout: 'ribs',
     rings: defaultRings(diameterMeters, 60),
@@ -332,7 +358,6 @@ function buildRibLeds(s: Structure): Led[] {
   const radius = s.diameterMeters / 2;
   const ribCount = Math.max(1, s.verticalRibCount | 0);
   const ledsPerRib = Math.max(1, s.rib.ledCount | 0);
-  const apexLat = s.rib.apexLatitudeDeg * DEG;
   const out: Led[] = [];
   let absoluteIndex = 0;
 
@@ -341,10 +366,11 @@ function buildRibLeds(s: Structure): Led[] {
     const cosLon = Math.cos(lon);
     const sinLon = Math.sin(lon);
     for (let i = 0; i < ledsPerRib; i++) {
-      // LED 0 sits at the rim (lat=0); last LED sits at the channel end.
-      // When ledsPerRib === 1 we collapse to the rim to avoid 0/0.
+      // LED 0 sits at the strip's top end (topLatitudeDeg); the last LED
+      // sits at the apex end. When ledsPerRib === 1 we collapse to the
+      // top end to avoid 0/0.
       const t = ledsPerRib > 1 ? i / (ledsPerRib - 1) : 0;
-      const lat = t * apexLat;
+      const lat = ribLatAt(s.rib, t);
       const rEff = radius + channelWaveMeters(s.rib, t);
       const [x, y, z] = spherePoint(rEff, lat, cosLon, sinLon);
       out.push({
@@ -371,7 +397,7 @@ function buildRibLeds(s: Structure): Led[] {
         // Holes sit between channel wave extremes, centered in each 1/count
         // band, alternating radially in/out of the channel path.
         const t = (j + 0.5) / holeCount;
-        const lat = t * apexLat;
+        const lat = ribLatAt(s.rib, t);
         const side = j % 2 === 0 ? 1 : -1;
         const rEff = radius + channelWaveMeters(s.rib, t) + side * s.rib.holes.offsetMeters;
         const [x, y, z] = spherePoint(rEff, lat, cosLon, sinLon);
@@ -406,22 +432,25 @@ export function totalLedCount(s: Structure): number {
 
 // Structural rib centerline: the plywood board itself is a smooth meridian
 // arc (only the routed channel waves). Returns `segments+1` points for the
-// given rib. Callers pass structure.frameApexLatitudeDeg for the extent.
+// given rib, spanning topLatitudeDeg → apexLatitudeDeg. Callers pass the
+// structure's frame extents.
 export function ribMeridianPoints(
   diameterMeters: number,
   ribIndex: number,
   ribCount: number,
   segments = 32,
   apexLatitudeDeg = 85,
+  topLatitudeDeg = 0,
 ): Array<[number, number, number]> {
   const r = diameterMeters / 2;
   const lon = (ribIndex / ribCount) * Math.PI * 2;
   const cosLon = Math.cos(lon);
   const sinLon = Math.sin(lon);
-  const topLat = apexLatitudeDeg * DEG;
+  const topLat = Math.min(topLatitudeDeg, apexLatitudeDeg - 1) * DEG;
+  const apexLat = apexLatitudeDeg * DEG;
   const pts: Array<[number, number, number]> = [];
   for (let s = 0; s <= segments; s++) {
-    const lat = (s / segments) * topLat;
+    const lat = topLat + (s / segments) * (apexLat - topLat);
     pts.push(spherePoint(r, lat, cosLon, sinLon));
   }
   return pts;

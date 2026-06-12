@@ -66,14 +66,17 @@ export function Dome() {
   // so the drawn ribs and the LED placement can never disagree on rib
   // count or longitude spacing.
   const frameApexDeg = structure.frameApexLatitudeDeg;
+  const frameTopDeg = structure.frameTopLatitudeDeg;
   const ribCount = Math.max(1, structure.verticalRibCount | 0);
   const ribPolylines = useMemo(() => {
     const out: Array<Array<[number, number, number]>> = [];
     for (let i = 0; i < ribCount; i++) {
-      out.push(ribMeridianPoints(structure.diameterMeters, i, ribCount, 32, frameApexDeg));
+      out.push(
+        ribMeridianPoints(structure.diameterMeters, i, ribCount, 48, frameApexDeg, frameTopDeg),
+      );
     }
     return out;
-  }, [structure.diameterMeters, ribCount, frameApexDeg]);
+  }, [structure.diameterMeters, ribCount, frameApexDeg, frameTopDeg]);
 
   // The routed channel on each rib face — the wavy groove the LED strip
   // sits in. Drawn slightly brighter than the frame so the squiggle reads
