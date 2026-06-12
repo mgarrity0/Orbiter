@@ -9,6 +9,7 @@ import { Dome } from '../Dome';
 import { InspectorHUD } from './InspectorHUD';
 import { WebcamOverlay } from './WebcamOverlay';
 import { motionController } from '../../core/motion';
+import { clamp } from '../../core/num';
 
 // Positions chosen so the dome (radius ~2.44m, hanging below origin with open
 // rim at y=0 and apex at y=-r) fits comfortably in the default FOV. Target is
@@ -201,10 +202,6 @@ function useShiftDragTilt(wrapRef: React.RefObject<HTMLDivElement>) {
       el.removeEventListener('pointercancel', onUp, { capture: true });
     };
   }, [wrapRef, patchMotion]);
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
 }
 
 // Bloom + ACES tone mapping. Gated on the `featureFlags.bloom` flag so the

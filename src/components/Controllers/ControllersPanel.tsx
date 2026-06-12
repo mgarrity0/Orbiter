@@ -9,7 +9,8 @@ import {
   newId,
   totalOutputLeds,
 } from '../../core/topology';
-import { totalLedCount } from '../../core/structure';
+import { Chipset, CHIPSETS, totalLedCount } from '../../core/structure';
+import { clampInt } from '../../core/num';
 
 const KINDS: ControllerKind[] = ['WLED', 'FastLED'];
 
@@ -56,7 +57,14 @@ export function ControllersPanel() {
           kind: 'WLED',
           host: '',
           outputs: [
-            { id: newId('out'), pin: 2, ledStart: 0, ledCount: 0, label: 'output-1' },
+            {
+              id: newId('out'),
+              pin: 2,
+              ledStart: 0,
+              ledCount: 0,
+              label: 'output-1',
+              chipset: 'WS2815' as const,
+            },
           ],
         },
       ],
@@ -83,6 +91,7 @@ export function ControllersPanel() {
                   ledStart: 0,
                   ledCount: 0,
                   label: `output-${c.outputs.length + 1}`,
+                  chipset: 'WS2815' as const,
                 },
               ],
             }
@@ -107,7 +116,11 @@ export function ControllersPanel() {
     <section className="panel-section controllers-panel">
       <h2>Controllers</h2>
       <div className="controllers-actions">
-        <button type="button" onClick={autoAssign} title="One controller per ring">
+        <button
+          type="button"
+          onClick={autoAssign}
+          title="One controller per strip (rib mode: channel + dots per controller)"
+        >
           Auto-assign
         </button>
         <button type="button" onClick={addController}>
@@ -117,8 +130,9 @@ export function ControllersPanel() {
 
       {topology.controllers.length === 0 && (
         <p className="library-empty">
-          No controllers. Click <code>Auto-assign</code> to generate one per ring, or{' '}
-          <code>+ Controller</code> to start from scratch.
+          No controllers. Click <code>Auto-assign</code> to generate one per strip (in rib
+          mode: one per rib, driving its channel and dots), or <code>+ Controller</code> to
+          start from scratch.
         </p>
       )}
 
@@ -170,6 +184,7 @@ export function ControllersPanel() {
                 <th>Pin</th>
                 <th>Start</th>
                 <th>Count</th>
+                <th>Chip</th>
                 <th></th>
               </tr>
             </thead>
@@ -190,7 +205,9 @@ export function ControllersPanel() {
                       max="48"
                       value={o.pin}
                       onChange={(e) =>
-                        patchOutput(c.id, o.id, { pin: Number(e.target.value) | 0 })
+                        patchOutput(c.id, o.id, {
+                          pin: clampInt(e.target.value, 0, 48, o.pin),
+                        })
                       }
                     />
                   </td>
@@ -201,7 +218,9 @@ export function ControllersPanel() {
                       max={total}
                       value={o.ledStart}
                       onChange={(e) =>
-                        patchOutput(c.id, o.id, { ledStart: Number(e.target.value) | 0 })
+                        patchOutput(c.id, o.id, {
+                          ledStart: clampInt(e.target.value, 0, total, o.ledStart),
+                        })
                       }
                     />
                   </td>
@@ -212,9 +231,25 @@ export function ControllersPanel() {
                       max={total}
                       value={o.ledCount}
                       onChange={(e) =>
-                        patchOutput(c.id, o.id, { ledCount: Number(e.target.value) | 0 })
+                        patchOutput(c.id, o.id, {
+                          ledCount: clampInt(e.target.value, 0, total, o.ledCount),
+                        })
                       }
                     />
+                  </td>
+                  <td>
+                    <select
+                      value={o.chipset}
+                      onChange={(e) =>
+                        patchOutput(c.id, o.id, { chipset: e.target.value as Chipset })
+                      }
+                    >
+                      {CHIPSETS.map((ch) => (
+                        <option key={ch} value={ch}>
+                          {ch}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td>
                     <button

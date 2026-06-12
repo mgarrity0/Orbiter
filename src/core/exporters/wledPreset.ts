@@ -42,7 +42,7 @@ export type WledSegment = {
   sx: 128;
   ix: 128;
   pal: 0;
-  sel: true;
+  sel: boolean;
   rev: false;
   mi: false;
   n?: string;      // optional name
@@ -83,12 +83,20 @@ export function buildWledPresetForController(
       on: true,
       frz: false,
       bri: 255, // master `bri` is the brightness knob; segment `bri` stays at 255
-      col: [[255, 160, 40], [0, 0, 0], [0, 0, 0]],
+      // Neutral white as the starting slot-0 color. The previous hardcoded
+      // warm-orange was a debugging leftover; emitting [255,255,255] is the
+      // safer default — WLED's built-in palettes and effects override it
+      // anyway, so users rarely see this color except on the "Solid" fx.
+      col: [[255, 255, 255], [0, 0, 0], [0, 0, 0]],
       fx: 0,
       sx: 128,
       ix: 128,
       pal: 0,
-      sel: true,
+      // Only the main segment (id 0) is initially selected. `sel: true` on
+      // every segment makes the whole controller light up at once when the
+      // user twiddles any control in the WLED UI, which is almost never
+      // what you want for a multi-segment install.
+      sel: i === 0,
       rev: false,
       mi: false,
       n: o.label,

@@ -2,8 +2,9 @@
 //
 // Produces a compilable .ino sketch for one ESP32 (or equivalent) per
 // FastLED controller in the topology. Each sketch wires up:
-//   - per-output CRGB buffers on the correct pins in the topology,
-//   - the WS2815 gamma LUT that matches the simulator's color pipeline,
+//   - per-output CRGB buffers on the correct pins with each output's own
+//     chipset from the topology,
+//   - the gamma LUT that matches the simulator's color pipeline,
 //   - the color-order template param on `FastLED.addLeds<>`,
 //   - master brightness matching the sim's brightness slider,
 //   - a small rainbow demo in loop() as a "the wiring works" smoke test.
@@ -44,13 +45,20 @@ function renderOneController(
   const order = cfg.colorOrder; // FastLED accepts RGB/RBG/GRB/GBR/BRG/BGR directly
 
   const outputDecls = ctrl.outputs
-    .map((o, i) => `CRGB leds_${i}[${Math.max(1, o.ledCount)}];  // pin ${o.pin} — ${o.label}`)
+    .map(
+      (o, i) =>
+        `CRGB leds_${i}[${Math.max(1, o.ledCount)}];  // pin ${o.pin} — ${o.label} (${o.chipset})`,
+    )
     .join('\n');
 
+  // Each output drives whatever chipset the topology says is on it — a rib
+  // channel strip and its hole-LED chain are usually different stock (e.g.
+  // WS2815 strip + discrete WS2811 pixels). FastLED's chipset identifiers
+  // match our Chipset union directly; recent FastLED (3.6+) has WS2815.
   const addLedsCalls = ctrl.outputs
     .map(
       (o, i) =>
-        `  FastLED.addLeds<WS2812B, ${o.pin}, ${order}>(leds_${i}, ${o.ledCount});`,
+        `  FastLED.addLeds<${o.chipset}, ${o.pin}, ${order}>(leds_${i}, ${o.ledCount});`,
     )
     .join('\n');
 

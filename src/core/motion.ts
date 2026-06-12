@@ -55,6 +55,13 @@ function zeroState(): MotionState {
   return { pitch: 0, roll: 0, yaw: 0, pitchVel: 0, rollVel: 0, yawVel: 0 };
 }
 
+// Cap the recording buffer at ~15 minutes of 60fps frames. Motion recording
+// is meant for short gesture capture, not indefinite logging — an unbounded
+// array grows a few MB/hour if the user forgets to stop. Hitting the cap
+// silently auto-stops the recording (see update()): the first 15 minutes
+// are preserved and the record button simply flips back to stopped.
+const MAX_RECORDING_FRAMES = 60 * 60 * 15;
+
 class MotionController {
   state: MotionState = zeroState();
 
@@ -152,8 +159,14 @@ class MotionController {
       this.state.yawVel = (this.state.yaw - prevYaw) / dt;
     }
 
-    if (this.isRecording) {
+    if (this.isRecording && this.recording.length < MAX_RECORDING_FRAMES) {
       this.recording.push({ ...this.state });
+      // Auto-stop at the cap so the isRecording flag reflects reality and
+      // the UI can show "stopped" instead of "still recording but silently
+      // dropping frames."
+      if (this.recording.length >= MAX_RECORDING_FRAMES) {
+        this.isRecording = false;
+      }
     }
   }
 

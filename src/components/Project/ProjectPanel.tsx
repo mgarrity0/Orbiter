@@ -8,6 +8,7 @@ import {
   ProjectSnapshot,
 } from '../../core/project';
 import { loadPattern } from '../../core/patternRuntime';
+import { nameExistsCaseInsensitive } from '../../core/fileNames';
 
 type Status =
   | { kind: 'idle' }
@@ -28,6 +29,13 @@ export function ProjectPanel() {
   const [available, setAvailable] = useState<string[]>([]);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const [busy, setBusy] = useState(false);
+  // The FILE this project was last saved to or loaded from (e.g.
+  // "My_Show.json"). The skip-confirm decision must be keyed on the file,
+  // not the display name: a file's embedded `name` can diverge from its
+  // filename (duplicated/renamed in Explorer), and the free-text Name
+  // field can point at a different existing file by the time Save is
+  // clicked. Only writing back to this exact file skips the confirm.
+  const [savedFile, setSavedFile] = useState<string | null>(null);
 
   const refreshList = useCallback(async () => {
     try {
@@ -55,18 +63,35 @@ export function ProjectPanel() {
     };
   };
 
-  const doSave = async (name: string) => {
+  const doSave = async (name: string, confirmOverwrite: boolean) => {
     setBusy(true);
     try {
       const snap = snapshotFromStore();
       snap.name = name;
       const file = buildProjectFile(snap);
       const filename = `${sanitizeFilename(name)}.json`;
+
+      // Overwrite guard. The sanitized filename collapses punctuation, so
+      // two different user-facing names can map to the same file on disk
+      // (e.g. "My Show" and "My-Show" both become "My_Show.json").
+      if (confirmOverwrite) {
+        if (nameExistsCaseInsensitive(filename, available)) {
+          const ok = window.confirm(
+            `A project named "${filename}" already exists. Overwrite?`,
+          );
+          if (!ok) {
+            setBusy(false);
+            return;
+          }
+        }
+      }
+
       await invoke<string>('write_project', {
         name: filename,
         content: JSON.stringify(file, null, 2),
       });
       setProjectName(name);
+      setSavedFile(filename);
       setStatus({ kind: 'success', message: `saved ${filename}` });
       await refreshList();
     } catch (e) {
@@ -76,12 +101,23 @@ export function ProjectPanel() {
     }
   };
 
-  const saveClick = () => doSave(projectName);
+  // "Save" skips the prompt only when it would write back to the exact
+  // file this project was loaded from / last saved to — re-saving your own
+  // file is safe. Any other target (edited Name field, never-saved
+  // project, "Save as…") warns before clobbering an existing file. The
+  // comparison is on sanitized filenames, case-insensitive, matching how
+  // the file lands on disk.
+  const saveClick = () => {
+    const targetFile = `${sanitizeFilename(projectName)}.json`;
+    const sameFile =
+      savedFile !== null && targetFile.toLowerCase() === savedFile.toLowerCase();
+    doSave(projectName, !sameFile);
+  };
 
   const saveAsClick = () => {
     const next = window.prompt('Save project as:', projectName);
     if (!next) return;
-    doSave(next.trim());
+    doSave(next.trim(), true);
   };
 
   const loadClick = async (filename: string) => {
@@ -91,6 +127,9 @@ export function ProjectPanel() {
       const raw = JSON.parse(content);
       const parsed: ProjectFile = parseProjectFile(raw);
       applyProjectFile(parsed);
+      // Track the file actually opened, not parsed.name — they diverge
+      // when a file was duplicated or renamed outside the app.
+      setSavedFile(filename);
       // Re-load the active pattern from disk, if any — applyProjectFile
       // only writes the *name*, not the module.
       if (parsed.activePatternName) {
@@ -141,8 +180,15 @@ export function ProjectPanel() {
       ) : (
         <ul className="library-list">
           {available.map((name) => (
-            <li key={name} title={name} onClick={() => loadClick(name)}>
-              {name}
+            <li key={name} title={name}>
+              <button
+                type="button"
+                className="library-item-btn"
+                onClick={() => loadClick(name)}
+                disabled={busy}
+              >
+                {name}
+              </button>
             </li>
           ))}
         </ul>

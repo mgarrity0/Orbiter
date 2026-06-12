@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../state/store';
 import { inspector } from '../../core/inspector';
+import { clamp } from '../../core/num';
 
 // Floating readout shown while a pixel is hovered. Displays the LED's
 // absolute index, ring + per-ring index, dome-local position, and the
@@ -36,7 +37,12 @@ export function InspectorHUD() {
   if (hovered == null || !leds[hovered]) return null;
   const led = leds[hovered];
   const [r, g, b] = rgb;
-  const hex = `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+  // Clamp to 0..255 defensively before formatting: a buggy pattern that
+  // writes outside [0,255] would otherwise produce 3+ hex chars per channel
+  // and corrupt the swatch color. The underlying buffer is Uint8ClampedArray,
+  // but we slurp into a plain tuple for the readout so redo the clamp.
+  const byte = (v: number) => clamp(Math.trunc(v), 0, 255);
+  const hex = `#${[byte(r), byte(g), byte(b)].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
   return (
     <div className="inspector-hud">
       <div className="inspector-row">

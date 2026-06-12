@@ -40,7 +40,14 @@ export function WebcamOverlay() {
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
+          try {
+            await videoRef.current.play();
+          } catch (playErr) {
+            // Autoplay policy, codec mismatch, or muted-media edge cases
+            // can reject play(). Surface it instead of silently swallowing
+            // — the webcam indicator would be on with no visible feed.
+            setError(`play: ${String(playErr instanceof Error ? playErr.message : playErr)}`);
+          }
         }
       } catch (e) {
         setError(String(e instanceof Error ? e.message : e));

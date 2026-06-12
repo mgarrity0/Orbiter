@@ -5,6 +5,7 @@ import {
   readPatternSource,
   writePatternSource,
 } from '../../core/patternRuntime';
+import { nameExistsCaseInsensitive } from '../../core/fileNames';
 
 // Boilerplate used when creating a new pattern from scratch.
 const NEW_PATTERN_TEMPLATE = (name: string) => `// ${name} — new pattern.
@@ -58,12 +59,13 @@ export function EditorPanel({ open, onClose }: Props) {
     if (!open) return;
     const target = fileName ?? activeName ?? available[0] ?? null;
     if (target && target !== fileName) {
-      void openFile(target);
+      // Internal call: on-open bootstrap, no dirty state to protect.
+      void openFileInternal(target);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const openFile = async (name: string) => {
+  const openFileInternal = async (name: string) => {
     setLoading(true);
     setStatus({ kind: 'idle' });
     try {
@@ -76,6 +78,20 @@ export function EditorPanel({ open, onClose }: Props) {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Confirms before discarding unsaved changes so a misclick doesn't nuke
+  // minutes of editor work. Returns true when it's safe to proceed.
+  const confirmDiscard = () =>
+    !dirtyRef.current ||
+    window.confirm(
+      `Discard unsaved changes to ${fileName ?? 'this pattern'}?`,
+    );
+
+  // Public wrapper for user-initiated file switches.
+  const openFile = async (name: string) => {
+    if (fileName !== name && !confirmDiscard()) return;
+    await openFileInternal(name);
   };
 
   const save = async () => {
@@ -91,10 +107,11 @@ export function EditorPanel({ open, onClose }: Props) {
   };
 
   const createNew = async () => {
+    if (!confirmDiscard()) return;
     const raw = window.prompt('New pattern filename (e.g. "my-pattern.js")');
     if (!raw) return;
     const name = /\.[jm]?js$/i.test(raw) ? raw : `${raw}.js`;
-    if (available.includes(name)) {
+    if (nameExistsCaseInsensitive(name, available)) {
       setStatus({ kind: 'error', message: `${name} already exists` });
       return;
     }
@@ -170,7 +187,15 @@ export function EditorPanel({ open, onClose }: Props) {
           >
             {statusLabel}
           </span>
-          <button type="button" className="editor-close" onClick={onClose} title="Close editor">
+          <button
+            type="button"
+            className="editor-close"
+            onClick={() => {
+              if (!confirmDiscard()) return;
+              onClose();
+            }}
+            title="Close editor"
+          >
             ×
           </button>
         </header>

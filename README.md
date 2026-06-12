@@ -37,9 +37,11 @@ codebase targets Windows, macOS, and Linux.
 - **Hot-reloads JavaScript pattern files.** Drop a `.js` into `patterns/`, select it
   in the Library panel, and edits in your editor reload automatically. No
   transpile step, no dev-server shenanigans — pattern files are ES modules.
-- **Simulates WS2815 color reproduction end-to-end.** The same trim → color-order
-  → brightness → gamma pipeline that the exporters bake for the hardware runs in
-  the simulator, so the on-screen pixels match what the strips will emit.
+- **Simulates WS2815 color reproduction end-to-end.** The same trim → brightness
+  → gamma pipeline that the exporters bake for the hardware runs in the
+  simulator, so the on-screen pixels match what the strips will emit. Channel
+  reordering is the driving firmware's job (FastLED template param / WLED bus
+  config) — the simulator always shows colors as authored.
 - **Models dome motion and live audio** so reactive patterns can be authored and
   previewed without touching the physical install. Shift-drag to tilt the dome,
   hit the mic toggle to pipe FFT bins straight into the pattern context.
@@ -117,7 +119,7 @@ cause re-renders 60×/s, which we explicitly avoid.
 **Render loop.** The `<Dome>` component owns the `useFrame` callback. Each frame:
 motion controller updates → group rotation applied → audio engine samples →
 pattern's `render(ctx, out)` fills an `Uint8ClampedArray` of linear 8-bit RGB
-→ `bakeFrameToLinearFloats` applies trim/brightness/gamma/color-order → the
+→ `bakeFrameToLinearFloats` applies trim/brightness/gamma → the
 result lands in `InstancedMesh.instanceColor` as linear Float32s. The halo
 InstancedMesh gets the same values multiplied by per-LED diffusion intensity.
 
@@ -139,7 +141,7 @@ src/
     Export/            WLED preset / WLED baked / FastLED export UI
   core/                Framework-agnostic logic
     structure.ts       Dome → LEDs geometry
-    colorSpace.ts      WS2815 pipeline (trim → color-order → brightness → gamma)
+    colorSpace.ts      WS2815 pipeline (trim → brightness → gamma)
     motion.ts          MotionController (idle / manual / rocking / playback)
     audio.ts           AudioEngine (Web Audio + FFT)
     topology.ts        Controller / output data model
@@ -221,15 +223,20 @@ perceived color:
 ```
 pattern out[] (linear 8-bit RGB)
   → * trim.{r,g,b}                   (per-channel calibration)
-  → color-order reorder              (RGB / GRB / GBR / …)
   → * master brightness              (WLED-style duty-cycle scaling)
   → pow(v/255, gamma)                (gamma correction, default 2.6)
   → Float32 linear in [0,1]          (uploaded to InstancedMesh.instanceColor)
   → Canvas outputColorSpace = sRGB   (display-side encode)
 ```
 
-All six steps are in `src/core/colorSpace.ts`. The FastLED exporter emits the
-same gamma curve as a `PROGMEM` LUT so the physical strip sees identical values.
+All steps are in `src/core/colorSpace.ts`. Channel reordering (RGB / GRB / …)
+is deliberately NOT in this pipeline: `colorOrder` describes how the strip is
+wired, and the component that physically drives the strip applies it — FastLED
+via the `addLeds<>` template parameter, WLED via its bus config (the baked
+exporter records it in metadata for the player). The simulator and exported
+bytes stay in authored RGB order, so the reorder can never be applied twice.
+The FastLED exporter emits the same gamma curve as a `PROGMEM` LUT so the
+physical strip sees identical values.
 
 ---
 

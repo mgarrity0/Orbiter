@@ -26,8 +26,11 @@ export function setup() {
 }
 
 export function render(ctx, out) {
-  const rings = ctx.structure.rings;
-  const ringCount = rings.length;
+  // `strips` is the derived per-strip list, always correct for the active
+  // layout (rings or ribs). Pulses sweep through strip indices; in ring
+  // mode this reads as apex→rim waves, in rib mode as a circular chase.
+  const strips = ctx.strips;
+  const stripCount = strips.length;
 
   const low = ctx.audio.low;
   // Slow the baseline so transient spikes still stand out.
@@ -40,26 +43,26 @@ export function render(ctx, out) {
     // Throttle: don't spawn twice within the same frame or within 80ms.
     const last = waves[waves.length - 1];
     if (!last || ctx.time - last.born > 0.08) {
-      waves.push({ born: ctx.time, pos: ringCount - 1 });
+      waves.push({ born: ctx.time, pos: stripCount - 1 });
     }
   }
 
-  // Advance each wave from apex (ringCount-1) toward rim (0) — ~0.6s total.
-  const speed = ringCount / 0.6;
+  // Advance each wave from the last strip toward the first — ~0.6s total.
+  const speed = stripCount / 0.6;
   for (let w = 0; w < waves.length; w++) {
     waves[w].pos -= speed * ctx.dt;
   }
-  // Cull waves that have run past the rim.
+  // Cull waves that have run off the first strip.
   while (waves.length > 0 && waves[0].pos < -2) waves.shift();
 
   // Ambient wash brightness tied to mid+high energy so the dome always moves.
   const ambient = 0.05 + ctx.audio.energy * 0.15;
 
-  // Walk rings, from apex (ring 0) outward. This matches structure.ts where
-  // ring 0 is the smallest ring near the apex.
+  // Walk strips in order; each wave's pulse contribution adds at its current
+  // position along the strip index axis.
   let ledIdx = 0;
-  for (let r = 0; r < ringCount; r++) {
-    const size = rings[r].ledCount;
+  for (let r = 0; r < stripCount; r++) {
+    const size = strips[r].ledCount;
 
     // Sum contributions from all active waves.
     let pulse = 0;

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   buildLeds,
+  buildStrips,
   defaultStructure,
   Led,
   Structure,
@@ -9,7 +10,12 @@ import {
 import { ColorConfig, defaultColorConfig } from '../core/colorSpace';
 import type { PatternModule } from '../core/patternApi';
 import { defaultMotionConfig, MotionConfig } from '../core/motion';
-import { defaultTopology, Topology } from '../core/topology';
+import {
+  defaultTopology,
+  reconcileTopology,
+  topologyMatchesAutoShape,
+  Topology,
+} from '../core/topology';
 import type { ProjectFile } from '../core/project';
 import {
   applyCalibration,
@@ -88,6 +94,16 @@ export type AppState = {
   // hovering any LED. Set by the Dome's raycast; read by the HUD overlay.
   hoveredLedIndex: number | null;
   setHoveredLed: (i: number | null) => void;
+
+  // True while the baked exporter is rendering frames. The Dome's frame
+  // loop pauses the live pattern render so the bake has exclusive use of
+  // the (stateful) pattern module — see bakeTopology.
+  baking: boolean;
+  setBaking: (b: boolean) => void;
+  // Re-run the active pattern's setup() on the next frame. Callers that
+  // mutate module state outside the frame loop (the baked exporter) use
+  // this to reset the live pattern afterwards.
+  reloadActivePattern: () => void;
 };
 
 const initialStructure = defaultStructure();
@@ -99,6 +115,101 @@ function ledsFor(structure: Structure, cal: CalibrationState): Led[] {
   const base = buildLeds(structure);
   if (!cal.enabled || !cal.positions) return base;
   return applyCalibration(base, cal.positions);
+}
+
+// Bump loadToken on the pattern state so the render loop re-runs setup()
+// with the new led list — patterns that allocate per-LED state in setup()
+// would otherwise read stale buffers with the wrong ledCount. Only the
+// helpers below call this for geometry changes; they bump strictly when the
+// LED list actually changed, so e.g. a diffusion edit no longer restarts a
+// running pattern from t=0.
+function withBumpedLoadToken(pattern: PatternState): PatternState {
+  return { ...pattern, loadToken: pattern.loadToken + 1 };
+}
+
+function ledsEqual(a: Led[], b: Led[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const p = a[i];
+    const q = b[i];
+    // lat/lon must be compared independently of x/y/z: a calibration
+    // overlay pins x/y/z to captured values, so a latitude-only structure
+    // edit changes the parametric fields patterns read while leaving
+    // positions identical.
+    if (
+      p.x !== q.x ||
+      p.y !== q.y ||
+      p.z !== q.z ||
+      p.lat !== q.lat ||
+      p.lon !== q.lon ||
+      p.ring !== q.ring
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Address-space fingerprint of a structure — anything the controller
+// topology depends on (strip order, sizes, chipsets). Positions are
+// deliberately excluded: calibration moves LEDs without re-addressing them.
+function stripSig(s: Structure): string {
+  return buildStrips(s)
+    .map((p) => `${p.startIndex}:${p.ledCount}:${p.kind}:${p.chipset}`)
+    .join('|');
+}
+
+// Every consequence of a structure change lives here so no action can
+// forget one of them: rebuild the LED list, regenerate the topology's
+// now-stale address ranges, restart the active pattern, and surface a
+// calibration that no longer fits — each only when actually needed.
+//
+// Topology policy: an untouched auto-generated topology silently tracks
+// the structure (so exports can never address a LED list that no longer
+// exists), but a hand-customized one is never clobbered — its stale
+// ranges surface as coverage warnings and the user re-syncs explicitly
+// via Auto-assign.
+function withStructureApplied(state: AppState, next: Structure): Partial<AppState> {
+  const base = buildLeds(next);
+  const cal = state.calibration;
+  const calActive = cal.enabled && !!cal.positions;
+  const calMismatch = calActive && cal.positions!.length !== base.length * 3;
+  const leds = calActive && !calMismatch ? applyCalibration(base, cal.positions) : base;
+  const changed = !ledsEqual(state.leds, leds);
+  const topologyStale =
+    stripSig(state.structure) !== stripSig(next) &&
+    topologyMatchesAutoShape(state.topology, state.structure);
+  return {
+    structure: next,
+    leds: changed ? leds : state.leds,
+    ...(topologyStale ? { topology: reconcileTopology(state.topology, next) } : {}),
+    ...(changed ? { pattern: withBumpedLoadToken(state.pattern) } : {}),
+    // The overlay silently no-ops on a count mismatch (applyCalibration);
+    // without this the panel would keep claiming captured positions while
+    // the viewport renders synthetic ones.
+    ...(calActive
+      ? {
+          calibration: {
+            ...cal,
+            error: calMismatch
+              ? `captured positions cover ${cal.positions!.length / 3} LEDs but the structure now has ${base.length} — showing synthetic positions until they match again`
+              : null,
+          },
+        }
+      : {}),
+  };
+}
+
+// Calibration moves LED positions but never re-addresses strips, so the
+// topology is untouched here by construction.
+function withCalibrationApplied(state: AppState, cal: CalibrationState): Partial<AppState> {
+  const leds = ledsFor(state.structure, cal);
+  const changed = !ledsEqual(state.leds, leds);
+  return {
+    calibration: cal,
+    leds: changed ? leds : state.leds,
+    ...(changed ? { pattern: withBumpedLoadToken(state.pattern) } : {}),
+  };
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -120,13 +231,11 @@ export const useAppStore = create<AppState>((set) => ({
   projectName: 'untitled',
   calibration: defaultCalibration,
 
-  setStructure: (s) =>
-    set((state) => ({ structure: s, leds: ledsFor(s, state.calibration) })),
+  setStructure: (s) => set((state) => withStructureApplied(state, s)),
   patchStructure: (patch) =>
-    set((state) => {
-      const next = { ...state.structure, ...patch } as Structure;
-      return { structure: next, leds: ledsFor(next, state.calibration) };
-    }),
+    set((state) =>
+      withStructureApplied(state, { ...state.structure, ...patch } as Structure),
+    ),
   setColorConfig: (c) => set({ colorConfig: c }),
   patchColorConfig: (patch) =>
     set((state) => ({ colorConfig: { ...state.colorConfig, ...patch } })),
@@ -178,38 +287,41 @@ export const useAppStore = create<AppState>((set) => ({
       // Keep the pattern runtime state intact — the project only records
       // the *name*; LibraryPanel is responsible for actually loading the
       // module by invoking read_pattern + setActivePattern after this.
-      pattern: {
+      // Bump loadToken so any currently-running pattern re-runs setup()
+      // against the new leds array (prevents stale per-LED state from the
+      // prior project's structure).
+      pattern: withBumpedLoadToken({
         ...state.pattern,
         activeName: p.activePatternName,
-      },
+      }),
     })),
 
   setCalibration: (positions, sourceName) =>
-    set((state) => {
-      const cal: CalibrationState = {
+    set((state) =>
+      withCalibrationApplied(state, {
         enabled: true,
         positions,
         sourceName,
         error: null,
-      };
-      return { calibration: cal, leds: ledsFor(state.structure, cal) };
-    }),
+      }),
+    ),
   clearCalibration: () =>
-    set((state) => ({
-      calibration: defaultCalibration,
-      leds: ledsFor(state.structure, defaultCalibration),
-    })),
+    set((state) => withCalibrationApplied(state, defaultCalibration)),
   setCalibrationEnabled: (enabled) =>
-    set((state) => {
-      const cal = { ...state.calibration, enabled };
-      return { calibration: cal, leds: ledsFor(state.structure, cal) };
-    }),
+    set((state) =>
+      withCalibrationApplied(state, { ...state.calibration, enabled }),
+    ),
   setCalibrationError: (err) =>
     set((state) => ({ calibration: { ...state.calibration, error: err } })),
 
   hoveredLedIndex: null,
   setHoveredLed: (i) =>
     set((state) => (state.hoveredLedIndex === i ? state : { hoveredLedIndex: i })),
+
+  baking: false,
+  setBaking: (b) => set({ baking: b }),
+  reloadActivePattern: () =>
+    set((state) => ({ pattern: withBumpedLoadToken(state.pattern) })),
 }));
 
 // Non-reactive selector helpers -- for hot paths that shouldn't trigger

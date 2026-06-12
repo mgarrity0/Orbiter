@@ -15,30 +15,27 @@ let flash = 0;     // ambient dome flash from recent strike
 let nextStrikeAt = 0;
 
 function spawnBolt(ctx) {
-  const rings = ctx.structure.rings;
-  const ringCount = rings.length;
-  if (ringCount === 0) return;
+  // Use ctx.strips so the pattern works in both ring and rib layouts.
+  // In ring mode the bolt walks rim→apex (a natural lightning fork). In
+  // rib mode it walks across ribs at the chosen longitude, which reads as
+  // a horizontal zig-zag. `strip.startIndex` locates each strip in the
+  // flat LED list.
+  const strips = ctx.strips;
+  const stripCount = strips.length;
+  if (stripCount === 0) return;
 
-  // Build a per-ring offset table so we can jump into the flat LED list by ring.
-  const ringStart = new Int32Array(ringCount);
-  let acc = 0;
-  for (let r = 0; r < ringCount; r++) {
-    ringStart[r] = acc;
-    acc += rings[r].ledCount;
-  }
-
-  // Start longitude is random; wander a little as we walk down through the
-  // rings (ring 0 = rim at top, last ring = apex at bottom).
+  // Start longitude is random; wander a little as we walk through strips.
   let lon = Math.random() * Math.PI * 2;
-  for (let r = 0; r < ringCount; r++) {
-    const size = rings[r].ledCount;
+  for (let r = 0; r < stripCount; r++) {
+    const size = strips[r].ledCount;
     if (size === 0) continue;
-    // Turn lon into an LED index on this ring.
+    const start = strips[r].startIndex;
+    // Turn lon into an LED index on this strip.
     const idx = Math.floor((lon / (Math.PI * 2)) * size) % size;
 
     // Core of the bolt + 1 LED on either side for some thickness.
     for (let d = -1; d <= 1; d++) {
-      const k = ringStart[r] + (((idx + d) % size) + size) % size;
+      const k = start + (((idx + d) % size) + size) % size;
       const v = d === 0 ? 1.0 : 0.5;
       if (levels[k] < v) levels[k] = v;
     }
@@ -47,11 +44,11 @@ function spawnBolt(ctx) {
     if (r > 0 && Math.random() < 0.2) {
       const forkOffset = Math.floor(size * (0.04 + Math.random() * 0.06));
       const sign = Math.random() < 0.5 ? 1 : -1;
-      const k = ringStart[r] + (((idx + sign * forkOffset) % size) + size) % size;
+      const k = start + (((idx + sign * forkOffset) % size) + size) % size;
       if (levels[k] < 0.8) levels[k] = 0.8;
     }
 
-    // Wander. Small random shift per ring.
+    // Wander. Small random shift per strip.
     lon += (Math.random() - 0.5) * 0.4;
   }
   flash = 0.6;

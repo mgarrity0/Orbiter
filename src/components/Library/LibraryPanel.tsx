@@ -1,11 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../../state/store';
 import {
-  getProjectRoot,
   listPatterns,
   loadPattern,
   onPatternsChanged,
-  patternsDirFor,
   startWatching,
 } from '../../core/patternRuntime';
 
@@ -37,13 +35,11 @@ export function LibraryPanel() {
 
     (async () => {
       try {
-        const root = await getProjectRoot();
-        if (cancelled) return;
         const names = await listPatterns();
         if (cancelled) return;
         setAvailable(names);
 
-        await startWatching(patternsDirFor(root));
+        await startWatching();
         if (cancelled) return;
 
         unlistenFn = await onPatternsChanged(() => {
@@ -105,10 +101,19 @@ export function LibraryPanel() {
             <li
               key={name}
               className={name === activeName ? 'active' : ''}
-              onClick={() => selectPattern(name)}
               title={name}
             >
-              {name}
+              {/* `<button>` inside `<li>` gives us keyboard focus + Enter/
+                  Space activation for free, plus a proper a11y role.
+                  The visual styling is still driven by the `<li>` via
+                  CSS so this is a pure accessibility improvement. */}
+              <button
+                type="button"
+                className="library-item-btn"
+                onClick={() => selectPattern(name)}
+              >
+                {name}
+              </button>
             </li>
           ))}
         </ul>

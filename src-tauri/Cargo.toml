@@ -14,7 +14,11 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-fs = "2"
+# tauri-plugin-fs was dropped: all fs access is through our custom
+# invoke commands (read_pattern, write_pattern, read_project, …) which
+# enforce name sanitization and confinement to the project root. Having
+# the fs plugin enabled let any webview code (including user-supplied
+# pattern files) read or write anywhere the user had permission.
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -15,16 +15,17 @@ export function render(ctx, out) {
   const n = bins.length;
   const usableBins = Math.floor(n * 0.7); // drop noisy high-end
 
-  const ringCount = Math.max(1, ctx.structure.rings.length);
+  // `strips` works in both layouts; `led.ring` is strip index either way.
+  const stripCount = Math.max(1, ctx.strips.length);
 
   for (let i = 0; i < ctx.ledCount; i++) {
     const led = ctx.leds[i];
-    // Position within this ring -> FFT bin index.
+    // Position within this strip -> FFT bin index.
     const binIdx = Math.floor((led.index / led.ringSize) * usableBins);
     const v = bins[binIdx];
 
-    // Color gradient by ring: bottom rings warm red/orange, top rings cool.
-    const tRing = led.ring / Math.max(1, ringCount - 1);
+    // Color gradient by strip: lower indices warm red/orange, higher cool.
+    const tRing = led.ring / Math.max(1, stripCount - 1);
     const r = (1 - tRing) * 255 + tRing * 30;
     const g = (1 - tRing) * 80 + tRing * 120;
     const b = (1 - tRing) * 30 + tRing * 255;

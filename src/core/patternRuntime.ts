@@ -66,8 +66,10 @@ export async function loadPattern(name: string): Promise<LoadResult> {
   }
 }
 
-export async function startWatching(patternsDir: string): Promise<void> {
-  await invoke('watch_patterns_dir', { path: patternsDir });
+export async function startWatching(): Promise<void> {
+  // The watched directory is computed Rust-side from project_root(), so
+  // there is nothing to pass here.
+  await invoke('watch_patterns_dir');
 }
 
 export async function onPatternsChanged(
@@ -79,15 +81,4 @@ export async function onPatternsChanged(
       handler(ev.payload.paths ?? []);
     },
   );
-}
-
-export async function getProjectRoot(): Promise<string> {
-  return await invoke<string>('project_root');
-}
-
-// Join a project root with /patterns. Works for both Windows backslash and
-// posix paths that Tauri might hand back.
-export function patternsDirFor(projectRoot: string): string {
-  const sep = projectRoot.includes('\\') ? '\\' : '/';
-  return projectRoot.endsWith(sep) ? `${projectRoot}patterns` : `${projectRoot}${sep}patterns`;
 }

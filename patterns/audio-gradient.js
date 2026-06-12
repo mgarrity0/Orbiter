@@ -11,24 +11,6 @@ export const meta = {
   description: 'latitude gradient with hue driven by audio bands',
 };
 
-function hsvToRgb(h, s, v) {
-  const i = Math.floor(h * 6);
-  const f = h * 6 - i;
-  const p = v * (1 - s);
-  const q = v * (1 - f * s);
-  const t = v * (1 - (1 - f) * s);
-  let r = 0, g = 0, b = 0;
-  switch (i % 6) {
-    case 0: r = v; g = t; b = p; break;
-    case 1: r = q; g = v; b = p; break;
-    case 2: r = p; g = v; b = t; break;
-    case 3: r = p; g = q; b = v; break;
-    case 4: r = t; g = p; b = v; break;
-    case 5: r = v; g = p; b = q; break;
-  }
-  return [r * 255, g * 255, b * 255];
-}
-
 let hueDrift = 0;
 
 export function setup() {
@@ -40,12 +22,15 @@ export function render(ctx, out) {
   // more energy. This gives a sense of motion even in a still mix.
   hueDrift = (hueDrift + ctx.dt * (0.03 + ctx.audio.energy * 0.4)) % 1;
 
-  const ringCount = Math.max(1, ctx.structure.rings.length);
+  // `strips` works for both layouts. In rib mode "strip index" is a
+  // longitude bin, so the gradient sweeps around the dome rather than top-
+  // to-bottom — still painterly, just rotated.
+  const stripCount = Math.max(1, ctx.strips.length);
 
   for (let i = 0; i < ctx.ledCount; i++) {
     const led = ctx.leds[i];
-    // tRing in [0, 1]: 0 at apex, 1 at rim (ring 0 is the smallest ring).
-    const tRing = led.ring / Math.max(1, ringCount - 1);
+    // tRing in [0, 1] along the strip index axis.
+    const tRing = led.ring / Math.max(1, stripCount - 1);
     // Longitude in [0, 1].
     const tLon = ((led.lon / (Math.PI * 2)) + 1) % 1;
 
@@ -72,9 +57,7 @@ export function render(ctx, out) {
     const bright = 0.25 + ctx.audio.mid * 0.5 + ctx.audio.high * 0.4 + ctx.audio.low * 0.2;
     const v = Math.min(1, bright);
 
-    const [r, g, b] = hsvToRgb(hue, 0.85, v);
-    out[i * 3 + 0] = r;
-    out[i * 3 + 1] = g;
-    out[i * 3 + 2] = b;
+    // ctx.hsv writes HSV-as-RGB into `out` without allocating per LED.
+    ctx.hsv(out, i * 3, hue, 0.85, v);
   }
 }

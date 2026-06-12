@@ -8,9 +8,28 @@
 //   z = -r * cos(lat) * sin(lon)
 // where r = diameter/2.  lat = 0 is the equator (widest ring, at the top);
 // lat = π/2 is the (closed) apex at the bottom.
+//
+// Two LED layout modes:
+//   - 'rings': LEDs wrap horizontally around the dome at fixed latitudes.
+//     Each Ring is a separate strip of varying length.
+//   - 'ribs' (default — matches the physical build): each plywood rib has a
+//     wavy channel routed into its face that holds an LED strip, plus a row
+//     of drilled holes alongside the channel that each carry one point LED.
+//     The rib lies in a meridian plane, so both the channel's wave and the
+//     hole offsets displace LEDs *radially* (in the board's plane) — exactly
+//     how the CNC cut waves across the board face.
+//
+// In both modes the per-LED `ring` field is "strip index" and `ringSize` is
+// "LEDs on that strip" — patterns that already use these fields to drive
+// per-strip behavior keep working in either layout, just with a different
+// spatial meaning. In rib mode, strips 0..ribCount-1 are the channel strips
+// and (when holes are configured) strips ribCount..2*ribCount-1 are the
+// per-rib hole-LED strips. Patterns that want a true altitude axis should
+// read `led.lat` (always correct regardless of layout).
 
 export type Diffusion = 'bare' | 'frosted' | 'acrylic-band';
-export type Chipset = 'WS2815';
+export type Chipset = 'WS2815' | 'WS2812B' | 'WS2811';
+export const CHIPSETS: Chipset[] = ['WS2815', 'WS2812B', 'WS2811'];
 export type LedDensity = 30 | 60;
 
 export type Ring = {
@@ -22,15 +41,56 @@ export type Ring = {
   chipset: Chipset;
 };
 
+// The wavy channel routed into each rib's face. Every rib is cut from the
+// same CNC template, so there is no per-rib phase — the wave is identical
+// on all ribs, like the physical build. amplitudeMeters = 0 degenerates to
+// a straight meridian channel.
+export type RibWave = {
+  amplitudeMeters: number; // radial swing of the channel (± from centerline)
+  cycles: number;          // full sine periods from rim to strip end
+};
+
+// Drilled holes alongside the channel, one point LED each. Holes alternate
+// sides of the channel (radially in/out) so they read as a scatter rather
+// than a second parallel strip. count = 0 disables them.
+export type RibHoles = {
+  count: number;
+  offsetMeters: number; // radial distance from the channel path
+  chipset: Chipset;     // typically discrete pixels, not strip stock
+};
+
+// Ribs are identical (one CNC template) so they share a single config
+// object rather than a per-rib list. `apexLatitudeDeg` is how close to the
+// apex the channel terminates.
+export type RibConfig = {
+  ledCount: number;
+  ledDensity: LedDensity;
+  apexLatitudeDeg: number;
+  diffusion: Diffusion;
+  chipset: Chipset;
+  wave: RibWave;
+  holes: RibHoles;
+};
+
+export type LedLayout = 'rings' | 'ribs';
+
 export type Structure = {
   diameterMeters: number;
   shape: 'open-top-half-dome';
   verticalRibCount: number;
+  // How far toward the apex the structural plywood ribs are drawn. This is
+  // frame geometry, deliberately independent of the LED layout — switching
+  // between ring and rib LED configs doesn't change the physical frame.
+  frameApexLatitudeDeg: number;
+  layout: LedLayout;
   rings: Ring[];
+  rib: RibConfig;
 };
 
 // Per-LED record. `i` is the absolute index into the flat LED list (the one
-// patterns write into via `out[i*3+0..2]`).
+// patterns write into via `out[i*3+0..2]`). `lat`/`lon` are the parametric
+// position on the dome (the channel wave only displaces x/y/z, not lat/lon,
+// so patterns keep a clean coordinate space).
 export type Led = {
   i: number;
   ring: number;
@@ -41,6 +101,22 @@ export type Led = {
   y: number;
   z: number;
   ringSize: number;
+};
+
+export type StripKind = 'channel' | 'points';
+
+// Derived per-strip metadata exposed to patterns and to the renderer's halo
+// lookup. Always correct for the active layout, so callers don't have to
+// branch on `structure.layout` themselves. `startIndex` is the strip's
+// first LED in the flat list — the LED list is exactly the strips
+// concatenated in order, and this field is the one place that invariant is
+// encoded (patterns must not re-derive offsets by summing ledCounts).
+export type Strip = {
+  startIndex: number;
+  ledCount: number;
+  kind: StripKind;
+  diffusion: Diffusion;
+  chipset: Chipset;
 };
 
 const DEG = Math.PI / 180;
@@ -57,6 +133,86 @@ export function suggestedLedCount(
   return Math.max(1, Math.round(ringCircumferenceMeters(diameterMeters, latitudeDeg) * density));
 }
 
+// ---------- rib channel geometry ----------------------------------------
+
+// Radial displacement of the routed channel at parameter t (0 = rim,
+// 1 = channel end at apexLatitudeDeg).
+function channelWaveMeters(rib: RibConfig, t: number): number {
+  const { amplitudeMeters, cycles } = rib.wave;
+  if (amplitudeMeters <= 0 || cycles <= 0) return 0;
+  return amplitudeMeters * Math.sin(t * cycles * Math.PI * 2);
+}
+
+function spherePoint(
+  radiusMeters: number,
+  lat: number,
+  cosLon: number,
+  sinLon: number,
+): [number, number, number] {
+  const rr = radiusMeters * Math.cos(lat);
+  return [rr * cosLon, -radiusMeters * Math.sin(lat), -rr * sinLon];
+}
+
+// Point on a rib's routed channel at parameter t in [0,1]. The wave
+// displaces the point radially, which keeps it in the rib's meridian plane
+// (on the board face) — the squiggle you see on the physical ribs.
+export function ribChannelPoint(
+  diameterMeters: number,
+  rib: RibConfig,
+  ribIndex: number,
+  ribCount: number,
+  t: number,
+): [number, number, number] {
+  const lon = (ribIndex / ribCount) * Math.PI * 2;
+  const lat = t * rib.apexLatitudeDeg * DEG;
+  const rEff = diameterMeters / 2 + channelWaveMeters(rib, t);
+  return spherePoint(rEff, lat, Math.cos(lon), Math.sin(lon));
+}
+
+// Polyline of one rib's channel — what the renderer draws as the routed
+// groove. The default segment count scales with the wave (16 points per
+// cycle, floor 96) so a high-cycle squiggle never aliases into straight
+// chords; pass `segments` only to override that.
+export function ribChannelSegments(rib: RibConfig): number {
+  return Math.max(96, Math.ceil(rib.wave.cycles * 16));
+}
+
+export function ribChannelPolyline(
+  diameterMeters: number,
+  rib: RibConfig,
+  ribIndex: number,
+  ribCount: number,
+  segments = ribChannelSegments(rib),
+): Array<[number, number, number]> {
+  const pts: Array<[number, number, number]> = [];
+  for (let s = 0; s <= segments; s++) {
+    pts.push(ribChannelPoint(diameterMeters, rib, ribIndex, ribCount, s / segments));
+  }
+  return pts;
+}
+
+// Arc length of the wavy channel, integrated numerically — the wave makes
+// the channel meaningfully longer than the plain meridian arc (a default
+// dome's channel is ~15-25% longer), so LED-count suggestions must measure
+// the actual path, not the great-circle arc.
+export function ribChannelArcLengthMeters(diameterMeters: number, rib: RibConfig): number {
+  const pts = ribChannelPolyline(diameterMeters, rib, 0, 1);
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const dx = pts[i][0] - pts[i - 1][0];
+    const dy = pts[i][1] - pts[i - 1][1];
+    const dz = pts[i][2] - pts[i - 1][2];
+    len += Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  return len;
+}
+
+export function suggestedRibLedCount(diameterMeters: number, rib: RibConfig): number {
+  return Math.max(1, Math.round(ribChannelArcLengthMeters(diameterMeters, rib) * rib.ledDensity));
+}
+
+// ---------- defaults -----------------------------------------------------
+
 export function defaultRings(diameterMeters: number, density: LedDensity = 60): Ring[] {
   // Evenly-ish distributed between equator and near the apex, skipping the
   // collapsed point at 90°.
@@ -71,17 +227,77 @@ export function defaultRings(diameterMeters: number, density: LedDensity = 60): 
   }));
 }
 
+export function defaultRib(diameterMeters: number, density: LedDensity = 60): RibConfig {
+  const rib: RibConfig = {
+    ledCount: 1, // placeholder — replaced below once the wave is known
+    ledDensity: density,
+    apexLatitudeDeg: 85,
+    diffusion: 'bare',
+    chipset: 'WS2815',
+    // Sized to read clearly at the default 4.88m dome: ±9cm of swing over
+    // 7 periods approximates the build's routed channel.
+    wave: { amplitudeMeters: 0.09, cycles: 7 },
+    holes: { count: 12, offsetMeters: 0.14, chipset: 'WS2811' },
+  };
+  rib.ledCount = suggestedRibLedCount(diameterMeters, rib);
+  return rib;
+}
+
 export function defaultStructure(): Structure {
   const diameterMeters = 4.88; // 16 ft
   return {
     diameterMeters,
     shape: 'open-top-half-dome',
     verticalRibCount: 16,
+    frameApexLatitudeDeg: 85,
+    // Rib layout is the default — it's what the physical build is.
+    layout: 'ribs',
     rings: defaultRings(diameterMeters, 60),
+    rib: defaultRib(diameterMeters, 60),
   };
 }
 
+// ---------- derived strips + LEDs ----------------------------------------
+
+// Build the per-strip list — always correct for the active layout, in flat
+// LED-list order. In ring mode this mirrors structure.rings. In rib mode
+// it's the channel strips (one per rib) followed by the per-rib hole-LED
+// strips when holes are configured.
+export function buildStrips(s: Structure): Strip[] {
+  const out: Strip[] = [];
+  let startIndex = 0;
+  const push = (ledCount: number, kind: StripKind, diffusion: Diffusion, chipset: Chipset) => {
+    out.push({ startIndex, ledCount, kind, diffusion, chipset });
+    startIndex += ledCount;
+  };
+
+  if (s.layout === 'ribs') {
+    const count = Math.max(1, s.verticalRibCount | 0);
+    const channelLeds = Math.max(1, s.rib.ledCount | 0);
+    for (let i = 0; i < count; i++) {
+      push(channelLeds, 'channel', s.rib.diffusion, s.rib.chipset);
+    }
+    const holeCount = Math.max(0, s.rib.holes.count | 0);
+    if (holeCount > 0) {
+      for (let i = 0; i < count; i++) {
+        push(holeCount, 'points', 'bare', s.rib.holes.chipset);
+      }
+    }
+    return out;
+  }
+
+  for (const r of s.rings) {
+    push(Math.max(1, r.ledCount | 0), 'channel', r.diffusion, r.chipset);
+  }
+  return out;
+}
+
 export function buildLeds(s: Structure): Led[] {
+  if (s.layout === 'ribs') return buildRibLeds(s);
+  return buildRingLeds(s);
+}
+
+function buildRingLeds(s: Structure): Led[] {
   const radius = s.diameterMeters / 2;
   const out: Led[] = [];
   let absoluteIndex = 0;
@@ -109,14 +325,88 @@ export function buildLeds(s: Structure): Led[] {
   return out;
 }
 
+// Rib-mode LED order matches buildStrips: every rib's channel strip first,
+// then every rib's hole LEDs. Channel LEDs follow the wavy channel path;
+// hole LEDs sit offset from it, alternating sides.
+function buildRibLeds(s: Structure): Led[] {
+  const radius = s.diameterMeters / 2;
+  const ribCount = Math.max(1, s.verticalRibCount | 0);
+  const ledsPerRib = Math.max(1, s.rib.ledCount | 0);
+  const apexLat = s.rib.apexLatitudeDeg * DEG;
+  const out: Led[] = [];
+  let absoluteIndex = 0;
+
+  for (let rib = 0; rib < ribCount; rib++) {
+    const lon = (rib / ribCount) * Math.PI * 2;
+    const cosLon = Math.cos(lon);
+    const sinLon = Math.sin(lon);
+    for (let i = 0; i < ledsPerRib; i++) {
+      // LED 0 sits at the rim (lat=0); last LED sits at the channel end.
+      // When ledsPerRib === 1 we collapse to the rim to avoid 0/0.
+      const t = ledsPerRib > 1 ? i / (ledsPerRib - 1) : 0;
+      const lat = t * apexLat;
+      const rEff = radius + channelWaveMeters(s.rib, t);
+      const [x, y, z] = spherePoint(rEff, lat, cosLon, sinLon);
+      out.push({
+        i: absoluteIndex++,
+        ring: rib,
+        index: i,
+        lat,
+        lon,
+        x,
+        y,
+        z,
+        ringSize: ledsPerRib,
+      });
+    }
+  }
+
+  const holeCount = Math.max(0, s.rib.holes.count | 0);
+  if (holeCount > 0) {
+    for (let rib = 0; rib < ribCount; rib++) {
+      const lon = (rib / ribCount) * Math.PI * 2;
+      const cosLon = Math.cos(lon);
+      const sinLon = Math.sin(lon);
+      for (let j = 0; j < holeCount; j++) {
+        // Holes sit between channel wave extremes, centered in each 1/count
+        // band, alternating radially in/out of the channel path.
+        const t = (j + 0.5) / holeCount;
+        const lat = t * apexLat;
+        const side = j % 2 === 0 ? 1 : -1;
+        const rEff = radius + channelWaveMeters(s.rib, t) + side * s.rib.holes.offsetMeters;
+        const [x, y, z] = spherePoint(rEff, lat, cosLon, sinLon);
+        out.push({
+          i: absoluteIndex++,
+          ring: ribCount + rib,
+          index: j,
+          lat,
+          lon,
+          x,
+          y,
+          z,
+          ringSize: holeCount,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 export function totalLedCount(s: Structure): number {
+  if (s.layout === 'ribs') {
+    const ribCount = Math.max(1, s.verticalRibCount | 0);
+    const perRib =
+      Math.max(1, s.rib.ledCount | 0) + Math.max(0, s.rib.holes.count | 0);
+    return ribCount * perRib;
+  }
   let n = 0;
   for (const ring of s.rings) n += Math.max(1, ring.ledCount | 0);
   return n;
 }
 
-// Rib geometry: a rib runs from the equator up along a meridian to near the
-// apex. Returns a list of `segments+1` points in 3D space for the given rib.
+// Structural rib centerline: the plywood board itself is a smooth meridian
+// arc (only the routed channel waves). Returns `segments+1` points for the
+// given rib. Callers pass structure.frameApexLatitudeDeg for the extent.
 export function ribMeridianPoints(
   diameterMeters: number,
   ribIndex: number,
@@ -132,9 +422,7 @@ export function ribMeridianPoints(
   const pts: Array<[number, number, number]> = [];
   for (let s = 0; s <= segments; s++) {
     const lat = (s / segments) * topLat;
-    const rr = r * Math.cos(lat);
-    const y = -r * Math.sin(lat);
-    pts.push([rr * cosLon, y, -rr * sinLon]);
+    pts.push(spherePoint(r, lat, cosLon, sinLon));
   }
   return pts;
 }

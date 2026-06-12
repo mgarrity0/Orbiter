@@ -267,6 +267,25 @@ input[type="number"]:focus, select:focus {
   color: #dce5ff;
   border-color: #2a3a70;
 }
+/* The inner <button> is a pure accessibility wrapper — keyboard focus and
+   Enter/Space activation land here while the visual styling stays on the
+   parent <li>. Reset native button chrome so the user sees text only. */
+.library-list .library-item-btn {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.library-list .library-item-btn:focus-visible {
+  outline: 1px solid #3a4a80;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 
 .library-stop {
   margin-top: 12px;

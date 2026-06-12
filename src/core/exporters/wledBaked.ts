@@ -13,15 +13,22 @@
 //   2. Deterministic repeatability for an installation show: the baked JSON
 //      is what you get, regardless of device CPU variance.
 //
-// The bytes in each frame have already been through the full WS2815
-// pipeline (trim → color-order → brightness → gamma) — what's in the file
-// is exactly what should go on the wire.
+// The bytes in each frame have been through the sim's pipeline
+// (trim → brightness → gamma) and are in authored RGB order — the device
+// applies its own bus color order on output (meta.colorOrder records what
+// the strip is wired as, so the player can verify the device config).
+//
+// The pattern module is STATEFUL and shared with the live preview — callers
+// must pause the live render loop for the duration of the bake (the store's
+// `baking` flag) and re-run setup() afterwards (`reloadActivePattern`), or
+// live frames will interleave with baked ones and corrupt both.
 
 import type { Structure, Led } from '../structure';
+import { buildStrips } from '../structure';
 import type { Topology, Controller } from '../topology';
 import type { ColorConfig } from '../colorSpace';
 import { bakeFrameToLinearFloats } from '../colorSpace';
-import type { PatternModule, RenderContext, SetupContext } from '../patternApi';
+import { writeHsv, type PatternModule, type RenderContext, type SetupContext } from '../patternApi';
 import type { MotionState } from '../motion';
 import type { AudioState } from '../audio';
 
@@ -56,21 +63,28 @@ function staticAudio(): AudioState {
   };
 }
 
-// Hex-encode a byte array without any separators. Output length = 2*bytes.
+// Precomputed byte → 2-char hex LUT. Avoids per-byte Number.toString(16)
+// + string concatenation in the bake hot loop (which runs
+// totalFrames * ledCount times — tens of thousands of calls for a normal
+// bake). Building the output via an Array + .join is dramatically faster
+// than repeated += on a growing string.
+const HEX_LUT: string[] = (() => {
+  const t = new Array<string>(256);
+  for (let i = 0; i < 256; i++) t[i] = (i < 16 ? '0' : '') + i.toString(16);
+  return t;
+})();
+
 function toHex(bytes: Uint8Array): string {
-  let s = '';
-  for (let i = 0; i < bytes.length; i++) {
-    const b = bytes[i];
-    s += (b < 16 ? '0' : '') + b.toString(16);
-  }
-  return s;
+  const parts = new Array<string>(bytes.length);
+  for (let i = 0; i < bytes.length; i++) parts[i] = HEX_LUT[bytes[i]];
+  return parts.join('');
 }
 
 // Walk a controller's outputs, pull the correct slice out of the global
-// on-wire byte buffer, and concatenate in output order. The global buffer
-// is already gamma-applied + color-reordered (it's what would go on the
-// wire if the whole chain were one strip); per-controller we just need to
-// pick the right ranges.
+// byte buffer, and concatenate in output order. The global buffer is
+// already gamma-applied, in authored RGB order (the device's bus config
+// reorders on output); per-controller we just need to pick the right
+// ranges.
 function controllerBytesForFrame(
   ctrl: Controller,
   wireBytes: Uint8Array,
@@ -88,23 +102,93 @@ function controllerBytesForFrame(
   return out;
 }
 
+export type BakeProgress = {
+  framesDone: number;
+  totalFrames: number;
+};
+
+// Hard ceiling on accumulated frame data. Every LED-frame is 6 hex chars
+// and the final JSON.stringify temporarily doubles the footprint, so 96M
+// chars keeps peak usage around ~200MB — far from V8's ~536M max string
+// length, where an over-large bake would otherwise throw only AFTER
+// rendering every frame. Checked up front instead.
+const MAX_BAKE_CHARS = 96_000_000;
+
+// The real footprint is per-controller: every WLED output's range is
+// hex-encoded into its controller's frame list, so overlapping or
+// duplicated ranges (a mirror install) count once per appearance — the
+// estimate must sum output ledCounts, not use the global LED count.
+function bakeChars(topology: Topology, totalFrames: number): number {
+  let outputLeds = 0;
+  for (const c of topology.controllers) {
+    if (c.kind !== 'WLED') continue;
+    for (const o of c.outputs) outputLeds += Math.max(0, o.ledCount);
+  }
+  return totalFrames * outputLeds * 6;
+}
+
+// Pre-flight size check, exported so the UI can reject an over-large bake
+// before pausing the live preview or touching the pattern module. Returns
+// a human-readable error or null.
+export function bakeSizeError(topology: Topology, opts: BakeOptions): string | null {
+  const totalFrames = Math.max(1, Math.round(opts.fps * opts.durationSec));
+  const estimated = bakeChars(topology, totalFrames);
+  if (estimated <= MAX_BAKE_CHARS) return null;
+  return (
+    `Bake too large: ${totalFrames.toLocaleString()} frames over the topology's outputs ` +
+    `≈ ${Math.round(estimated / 1e6)}M chars of frame data (limit ${MAX_BAKE_CHARS / 1e6}M). ` +
+    `Lower the FPS or duration, or split the show into shorter segments.`
+  );
+}
+
+// Yield to the event loop without setTimeout(0): nested timers get clamped
+// to ~4ms after a few iterations, which would make fast bakes spend most of
+// their wall time asleep. MessageChannel posts are not throttled. One
+// channel reused across bakes — the UI serializes bakes via its busy flag.
+const yieldToEventLoop = (() => {
+  const channel = new MessageChannel();
+  let resolve: (() => void) | null = null;
+  channel.port1.onmessage = () => {
+    resolve?.();
+    resolve = null;
+  };
+  return () =>
+    new Promise<void>((r) => {
+      resolve = r;
+      channel.port2.postMessage(null);
+    });
+})();
+
 // Bake N frames of `module` into a per-controller JSON bundle.
 // Throws if the pattern's render throws (caller should surface to UI).
-export function bakeTopology(
+//
+// Async so the UI can repaint mid-bake: after every YIELD_BUDGET_MS of
+// work we fire `onProgress` and yield to the event loop via the
+// MessageChannel helper above (not setTimeout — see its comment), so the
+// progress bar updates and the window never feels frozen.
+export async function bakeTopology(
   module: PatternModule,
   structure: Structure,
   leds: Led[],
   topology: Topology,
   cfg: ColorConfig,
   opts: BakeOptions,
-): WledBakedFile[] {
+  onProgress?: (p: BakeProgress) => void,
+): Promise<WledBakedFile[]> {
   const ledCount = leds.length;
   const totalFrames = Math.max(1, Math.round(opts.fps * opts.durationSec));
   const dt = 1 / opts.fps;
 
+  const sizeError = bakeSizeError(topology, opts);
+  if (sizeError) throw new Error(sizeError);
+
+  // Derived per-strip list so patterns that read `ctx.strips` (works in
+  // both ring and rib layouts) see the same data they'd see at runtime.
+  const strips = buildStrips(structure);
+
   // Give the module a chance to run setup.
   if (module.setup) {
-    const setupCtx: SetupContext = { structure, leds, ledCount };
+    const setupCtx: SetupContext = { structure, leds, ledCount, strips };
     module.setup(setupCtx);
   }
 
@@ -120,6 +204,13 @@ export function bakeTopology(
   const motion = staticMotion();
   const audio = staticAudio();
 
+  // Yield on elapsed time, not frame count: a fixed every-N-frames yield
+  // punishes cheap patterns (they'd sleep more than they work) and starves
+  // the UI on expensive ones. ~24ms of work per slice keeps the progress
+  // bar and window responsive without measurable throughput cost.
+  const YIELD_BUDGET_MS = 24;
+  let lastYield = performance.now();
+
   for (let f = 0; f < totalFrames; f++) {
     const time = f * dt;
     rgbOut.fill(0);
@@ -130,8 +221,10 @@ export function bakeTopology(
       structure,
       leds,
       ledCount,
+      strips,
       motion,
       audio,
+      hsv: writeHsv,
     };
     module.render(ctx, rgbOut);
 
@@ -149,7 +242,15 @@ export function bakeTopology(
       const ctrlBytes = controllerBytesForFrame(c, wireBytes);
       framesByCtrl.get(c.id)!.push(toHex(ctrlBytes));
     }
+
+    if (performance.now() - lastYield > YIELD_BUDGET_MS && f + 1 < totalFrames) {
+      onProgress?.({ framesDone: f + 1, totalFrames });
+      // eslint-disable-next-line no-await-in-loop
+      await yieldToEventLoop();
+      lastYield = performance.now();
+    }
   }
+  onProgress?.({ framesDone: totalFrames, totalFrames });
 
   return wledControllers.map((c) => {
     const frames = framesByCtrl.get(c.id)!;

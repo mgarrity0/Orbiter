@@ -3,9 +3,10 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../../state/store';
 import { buildWledPresetBundle } from '../../core/exporters/wledPreset';
-import { bakeTopology } from '../../core/exporters/wledBaked';
+import { bakeSizeError, bakeTopology } from '../../core/exporters/wledBaked';
 import { buildFastLedSketches } from '../../core/exporters/arduinoFastled';
 import { coverageIssues } from '../../core/topology';
+import { clampFloat, clampInt } from '../../core/num';
 
 type Status =
   | { kind: 'idle' }
@@ -36,6 +37,8 @@ export function ExportPanel() {
   const [fps, setFps] = useState(30);
   const [duration, setDuration] = useState(10);
   const [busy, setBusy] = useState(false);
+  // Null when not baking; {done, total} while the async bake runs.
+  const [bakeProgress, setBakeProgress] = useState<{ done: number; total: number } | null>(null);
 
   const issues = coverageIssues(topology, structure);
   const hasWled = topology.controllers.some((c) => c.kind === 'WLED');
@@ -69,13 +72,34 @@ export function ExportPanel() {
 
   const exportWledBaked = async () => {
     if (!activeModule) return;
+    const opts = { fps, durationSec: duration, patternName: activeName ?? 'unnamed' };
+    // Reject over-large bakes before pausing the preview or touching the
+    // pattern module — just an error message, no pattern restart.
+    const sizeErr = bakeSizeError(topology, opts);
+    if (sizeErr) {
+      setStatus({ kind: 'error', message: sizeErr });
+      return;
+    }
     setBusy(true);
+    setBakeProgress({ done: 0, total: Math.round(fps * duration) });
     try {
-      const bundle = bakeTopology(activeModule, structure, leds, topology, cfg, {
-        fps,
-        durationSec: duration,
-        patternName: activeName ?? 'unnamed',
-      });
+      let bundle;
+      // The bake drives the same stateful module the live preview renders
+      // with — pause the live loop while it runs, then bump loadToken so
+      // the preview re-runs setup() instead of resuming from bake-mutated
+      // state. Both happen as soon as the bake stops owning the module:
+      // the save dialog below can stay open indefinitely and the preview
+      // should be running behind it.
+      useAppStore.getState().setBaking(true);
+      try {
+        bundle = await bakeTopology(activeModule, structure, leds, topology, cfg, opts, (p) =>
+          setBakeProgress({ done: p.framesDone, total: p.totalFrames }),
+        );
+      } finally {
+        useAppStore.getState().setBaking(false);
+        useAppStore.getState().reloadActivePattern();
+        setBakeProgress(null);
+      }
       const files = bundle.map((f) => ({ filename: f.filename, content: f.json }));
       const paths = await writeFilesTo(files, 'WLED baked');
       reportWritten(paths, 'WLED baked');
@@ -83,6 +107,7 @@ export function ExportPanel() {
       handleError(e);
     } finally {
       setBusy(false);
+      setBakeProgress(null);
     }
   };
 
@@ -142,7 +167,7 @@ export function ExportPanel() {
           max="120"
           step="1"
           value={fps}
-          onChange={(e) => setFps(Math.max(1, Number(e.target.value) | 0))}
+          onChange={(e) => setFps(clampInt(e.target.value, 1, 120, fps))}
         />
       </div>
       <div className="field">
@@ -153,7 +178,7 @@ export function ExportPanel() {
           max="600"
           step="0.1"
           value={duration}
-          onChange={(e) => setDuration(Math.max(0.1, Number(e.target.value)))}
+          onChange={(e) => setDuration(clampFloat(e.target.value, 0.1, 600, duration))}
         />
       </div>
       <button
@@ -169,7 +194,9 @@ export function ExportPanel() {
               : ''
         }
       >
-        Bake & export ({Math.round(fps * duration)} frames)
+        {bakeProgress
+          ? `Baking ${bakeProgress.done} / ${bakeProgress.total}…`
+          : `Bake & export (${Math.round(fps * duration)} frames)`}
       </button>
 
       <h3>FastLED sketch</h3>
