@@ -97,14 +97,19 @@ export type Structure = {
   rib: RibConfig;
 };
 
+export type StripKind = 'channel' | 'points';
+
 // Per-LED record. `i` is the absolute index into the flat LED list (the one
 // patterns write into via `out[i*3+0..2]`). `lat`/`lon` are the parametric
 // position on the dome (the channel wave only displaces x/y/z, not lat/lon,
-// so patterns keep a clean coordinate space).
+// so patterns keep a clean coordinate space). `kind` mirrors the owning
+// strip's kind so patterns can treat the hole dots differently from strip
+// LEDs without re-deriving strip ranges.
 export type Led = {
   i: number;
   ring: number;
   index: number;
+  kind: StripKind;
   lat: number;
   lon: number;
   x: number;
@@ -112,8 +117,6 @@ export type Led = {
   z: number;
   ringSize: number;
 };
-
-export type StripKind = 'channel' | 'points';
 
 // Derived per-strip metadata exposed to patterns and to the renderer's halo
 // lookup. Always correct for the active layout, so callers don't have to
@@ -339,6 +342,7 @@ function buildRingLeds(s: Structure): Led[] {
         i: absoluteIndex++,
         ring: r,
         index: i,
+        kind: 'channel',
         lat,
         lon,
         x: ringRadius * Math.cos(lon),
@@ -377,6 +381,7 @@ function buildRibLeds(s: Structure): Led[] {
         i: absoluteIndex++,
         ring: rib,
         index: i,
+        kind: 'channel',
         lat,
         lon,
         x,
@@ -405,6 +410,7 @@ function buildRibLeds(s: Structure): Led[] {
           i: absoluteIndex++,
           ring: ribCount + rib,
           index: j,
+          kind: 'points',
           lat,
           lon,
           x,

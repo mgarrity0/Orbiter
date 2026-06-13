@@ -52,10 +52,10 @@ export function writeHsv(
 // `strips` is a derived per-strip list that is always correct for the
 // active layout — in ring mode it mirrors structure.rings, in rib mode it
 // is the channel strips followed by the per-rib hole-LED strips (check
-// `strip.kind` to tell them apart). Each strip carries `startIndex`, its
-// first LED in the flat list — use it instead of summing ledCounts.
-// Patterns should prefer `strips` over reading `structure.rings` directly
-// if they care about both layouts.
+// `strip.kind`, or per LED `led.kind`, to tell channel LEDs from hole
+// dots). Each strip carries `startIndex`, its first LED in the flat list —
+// use it instead of summing ledCounts. Patterns should prefer `strips`
+// over reading `structure.rings` directly if they care about both layouts.
 export type RenderContext = {
   time: number;
   dt: number;

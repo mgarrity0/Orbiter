@@ -135,14 +135,17 @@ function ledsEqual(a: Led[], b: Led[]): boolean {
     // lat/lon must be compared independently of x/y/z: a calibration
     // overlay pins x/y/z to captured values, so a latitude-only structure
     // edit changes the parametric fields patterns read while leaving
-    // positions identical.
+    // positions identical. `kind` is compared too so patterns that cache a
+    // per-LED channel/dot classification (starfield, tilt-level) re-run
+    // setup() if a future structure ever reclassifies an LED in place.
     if (
       p.x !== q.x ||
       p.y !== q.y ||
       p.z !== q.z ||
       p.lat !== q.lat ||
       p.lon !== q.lon ||
-      p.ring !== q.ring
+      p.ring !== q.ring ||
+      p.kind !== q.kind
     ) {
       return false;
     }

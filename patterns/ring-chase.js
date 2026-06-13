@@ -1,44 +1,71 @@
-// ring-chase.js — a bright dot runs around each ring, one ring per color.
+// ring-chase.js — a rainbow beam spirals around the orb.
 //
-// Demonstrates: per-LED lookup via ctx.leds, time-based animation, per-ring
-// state. Each ring's dot advances at the same angular rate so larger rings
-// sweep more LEDs per second.
+// The beam is a bright head with a fading tail that sweeps in longitude,
+// twisted into a helix by altitude: each LED's chase phase is its longitude
+// plus a twist proportional to its height, so in rib mode the beam corkscrews
+// up the orb and in ring mode the per-ring heads trail each other into the
+// same spiral. Hue runs along altitude and slowly rotates; the hole dots pop
+// a little brighter as the beam passes them.
 
 export const meta = {
   name: 'ring-chase',
-  description: 'a colored dot chases around each ring',
+  description: 'a rainbow beam spirals around the orb',
 };
 
-const RING_COLORS = [
-  [255, 60, 40],
-  [255, 200, 20],
-  [40, 255, 120],
-  [40, 180, 255],
-  [200, 80, 255],
-  [255, 60, 180],
-];
+const TWO_PI = Math.PI * 2;
+const TWIST = 2.4;    // radians of longitude twist across the full height
+const TAIL = 0.9;     // radians — how long the fading tail is
+
+// Latitude extents, measured in setup (orb crown → bottom apex). cachedCount
+// lets render() self-heal if it's ever reached without a fresh setup.
+let minLat = 0;
+let maxLat = 1;
+let cachedCount = -1;
+
+export function setup(ctx) {
+  minLat = Infinity;
+  maxLat = -Infinity;
+  for (let i = 0; i < ctx.leds.length; i++) {
+    const lat = ctx.leds[i].lat;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+  if (!(maxLat > minLat)) {
+    minLat = 0;
+    maxLat = 1;
+  }
+  cachedCount = ctx.ledCount;
+}
 
 export function render(ctx, out) {
-  // Dot position = angular rate * time, wrapped to [0, 2pi).
-  const TWO_PI = Math.PI * 2;
+  if (cachedCount !== ctx.ledCount) setup(ctx);
+
   const anglePerSec = TWO_PI * 0.4; // one lap every 2.5s
   const headAngle = (anglePerSec * ctx.time) % TWO_PI;
-
-  const tailLen = 0.35; // radians — how long the fading tail is
+  const latSpan = maxLat - minLat;
 
   for (let i = 0; i < ctx.ledCount; i++) {
     const led = ctx.leds[i];
-    const color = RING_COLORS[led.ring % RING_COLORS.length];
-    // Distance from this LED to the head, going "behind" the head so the
-    // tail fades out trailing it. Wrapped into [0, 2pi).
-    const d = (((headAngle - led.lon) % TWO_PI) + TWO_PI) % TWO_PI;
+    const tAlt = Math.max(0, Math.min(1, (led.lat - minLat) / latSpan));
 
-    let brightness = 0;
-    if (d < tailLen) {
-      brightness = 1 - d / tailLen;
+    // Helix: the chase phase advances with altitude, so the head traces a
+    // corkscrew instead of a flat sweep.
+    const phase = led.lon + tAlt * TWIST;
+    // Distance behind the head, wrapped into [0, 2pi).
+    const d = (((headAngle - phase) % TWO_PI) + TWO_PI) % TWO_PI;
+
+    let brightness = d < TAIL ? 1 - d / TAIL : 0;
+    if (brightness === 0) {
+      out[i * 3 + 0] = 0;
+      out[i * 3 + 1] = 0;
+      out[i * 3 + 2] = 0;
+      continue;
     }
-    out[i * 3 + 0] = color[0] * brightness;
-    out[i * 3 + 1] = color[1] * brightness;
-    out[i * 3 + 2] = color[2] * brightness;
+    brightness *= brightness;
+    if (led.kind === 'points') brightness = Math.min(1, brightness * 1.4);
+
+    // Hue runs along altitude and slowly rotates over time.
+    const hue = (0.62 + tAlt * 0.45 + ctx.time * 0.03) % 1;
+    ctx.hsv(out, i * 3, hue, 0.9, brightness);
   }
 }

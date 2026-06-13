@@ -1,41 +1,95 @@
-// lightning.js — lightning strikes carve crooked forks across the dome.
+// lightning.js — lightning strikes carve crooked forks across the orb.
 //
-// Every few seconds a "bolt" is spawned at a random longitude and descends
-// down the rings, branching with small lateral jitter. The bolt's LEDs hold
-// full white for a few frames, then fade to a cool afterimage. A brief
-// ambient flash brightens the whole dome the instant a bolt fires.
+// In rib mode a bolt strikes the crown and crawls DOWN one rib's channel,
+// jittering sideways to neighboring ribs and occasionally forking — and
+// every cell it strikes can flash the nearest hole dot on that rib, so the
+// dots spark like embers along the bolt's path. In ring mode the bolt
+// descends through the rings at a wandering longitude, the classic fork.
+// A brief ambient flash brightens the whole orb the instant a bolt fires.
 
 export const meta = {
   name: 'lightning',
-  description: 'stormy dome with crooked lightning forks',
+  description: 'crooked lightning forks crawl down the orb',
 };
 
 let levels = null; // per-LED cool-white intensity, decays each frame
-let flash = 0;     // ambient dome flash from recent strike
+let flash = 0;     // ambient orb flash from recent strike
 let nextStrikeAt = 0;
 
-function spawnBolt(ctx) {
-  // Use ctx.strips so the pattern works in both ring and rib layouts.
-  // In ring mode the bolt walks rim→apex (a natural lightning fork). In
-  // rib mode it walks across ribs at the chosen longitude, which reads as
-  // a horizontal zig-zag. `strip.startIndex` locates each strip in the
-  // flat LED list.
-  const strips = ctx.strips;
-  const stripCount = strips.length;
-  if (stripCount === 0) return;
+// Strike one cell of a rib-mode bolt: the LED itself, a neighbor above and
+// below for thickness, and (sometimes) the rib's nearest hole dot.
+function strikeRibCell(strips, nChan, rib, idx, v) {
+  const s = strips[rib];
+  const size = s.ledCount;
+  if (size === 0) return;
+  const k = Math.max(0, Math.min(size - 1, idx));
+  for (let d = -1; d <= 1; d++) {
+    const kk = k + d;
+    if (kk < 0 || kk >= size) continue;
+    const led = s.startIndex + kk;
+    const lv = d === 0 ? v : v * 0.5;
+    if (levels[led] < lv) levels[led] = lv;
+  }
+  const dots = strips[nChan + rib];
+  if (dots && dots.kind === 'points' && Math.random() < 0.4) {
+    // Map by latitude parameter, not raw strip fraction: channel LEDs run
+    // t = k/(size-1) while dots sit at t = (j+0.5)/holeCount, so the nearest
+    // dot to a struck cell is round(t*holeCount - 0.5) — otherwise the spark
+    // drifts a band off near the crown/apex where the mappings diverge most.
+    const tCell = size > 1 ? k / (size - 1) : 0;
+    const j = Math.max(0, Math.min(dots.ledCount - 1, Math.round(tCell * dots.ledCount - 0.5)));
+    const led = dots.startIndex + j;
+    if (levels[led] < 0.9) levels[led] = 0.9;
+  }
+}
 
-  // Start longitude is random; wander a little as we walk through strips.
+// Crawl from the crown toward the apex, wandering across ribs. `rib` wraps
+// around the orb. Returns nothing — it writes into `levels`.
+function walkRibBolt(strips, nChan, startRib, startIdx, v) {
+  const size = strips[startRib].ledCount;
+  const stride = Math.max(1, Math.round(size / 44));
+  let rib = startRib;
+  for (let idx = startIdx; idx < size; idx += stride) {
+    strikeRibCell(strips, nChan, rib, idx, v);
+    // Lateral jitter: hop to a neighboring rib now and then.
+    if (Math.random() < 0.3) {
+      rib = (rib + (Math.random() < 0.5 ? 1 : nChan - 1)) % nChan;
+    }
+    // Rare fork: a dimmer branch splits off and walks the rest on its own.
+    if (Math.random() < 0.05 && v > 0.6) {
+      const forkRib = (rib + (Math.random() < 0.5 ? 1 : nChan - 1)) % nChan;
+      walkRibBolt(strips, nChan, forkRib, idx + stride, v * 0.7);
+      // The main bolt sometimes dies where it forked.
+      if (Math.random() < 0.3) return;
+    }
+  }
+}
+
+function spawnBolt(ctx) {
+  const strips = ctx.strips;
+  let nChan = 0;
+  for (let s = 0; s < strips.length; s++) {
+    if (strips[s].kind !== 'points') nChan++;
+  }
+  if (nChan === 0) return;
+
+  if (ctx.structure.layout === 'ribs') {
+    walkRibBolt(strips, nChan, (Math.random() * nChan) | 0, 0, 1.0);
+    flash = 0.6;
+    return;
+  }
+
+  // Ring mode: descend through the rings at a wandering longitude.
   let lon = Math.random() * Math.PI * 2;
-  for (let r = 0; r < stripCount; r++) {
-    const size = strips[r].ledCount;
+  for (let r = 0; r < nChan; r++) {
+    const s = strips[r];
+    const size = s.ledCount;
     if (size === 0) continue;
-    const start = strips[r].startIndex;
-    // Turn lon into an LED index on this strip.
     const idx = Math.floor((lon / (Math.PI * 2)) * size) % size;
 
     // Core of the bolt + 1 LED on either side for some thickness.
     for (let d = -1; d <= 1; d++) {
-      const k = start + (((idx + d) % size) + size) % size;
+      const k = s.startIndex + (((idx + d) % size) + size) % size;
       const v = d === 0 ? 1.0 : 0.5;
       if (levels[k] < v) levels[k] = v;
     }
@@ -44,7 +98,7 @@ function spawnBolt(ctx) {
     if (r > 0 && Math.random() < 0.2) {
       const forkOffset = Math.floor(size * (0.04 + Math.random() * 0.06));
       const sign = Math.random() < 0.5 ? 1 : -1;
-      const k = start + (((idx + sign * forkOffset) % size) + size) % size;
+      const k = s.startIndex + (((idx + sign * forkOffset) % size) + size) % size;
       if (levels[k] < 0.8) levels[k] = 0.8;
     }
 
